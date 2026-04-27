@@ -3,6 +3,8 @@
 //! The storage process is the sole gatekeeper for all persistent state.
 //! Partition key checked on every read/write — no exceptions.
 
+#![forbid(unsafe_code)]
+
 pub mod gatekeeper;
 pub mod partition_key;
 pub mod primitives;

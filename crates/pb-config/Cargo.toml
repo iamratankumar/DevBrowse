@@ -2,6 +2,8 @@
 name    = "pb-config"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # pb-config is the shared config contract crate.
 # Dependency rule: ANY crate may depend on this one (config structs only).

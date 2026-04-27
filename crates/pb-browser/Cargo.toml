@@ -2,6 +2,8 @@
 name    = "pb-browser"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # pb-browser is the main orchestrator binary.
 # Communicates with all other processes exclusively via IPC (pb-ipc).

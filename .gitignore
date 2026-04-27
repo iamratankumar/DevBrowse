@@ -4,3 +4,16 @@
 .DS_Store
 .idea/
 .vscode/
+
+# secrets — never commit
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets/

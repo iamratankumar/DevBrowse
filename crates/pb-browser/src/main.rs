@@ -4,6 +4,8 @@
 //! Communicates with them exclusively via IPC (pb-ipc). Never imports their
 //! crates directly — zero exceptions to this rule.
 
+#![forbid(unsafe_code)]
+
 mod shutdown;
 mod startup;
 

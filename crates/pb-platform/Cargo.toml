@@ -2,6 +2,8 @@
 name    = "pb-platform"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # pb-platform defines OS adapter traits only.
 # No pb-* imports — pure trait definitions, no inter-crate coupling.

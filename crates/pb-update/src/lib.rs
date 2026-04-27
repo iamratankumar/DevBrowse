@@ -4,6 +4,8 @@
 //!   Track 1 — Blocklist: plain text, signed, 1-hour randomized delay.
 //!   Track 2 — Wrapper compatibility manifest: TOML, separate offline HSM key.
 
+#![forbid(unsafe_code)]
+
 pub mod blocklist_fetcher;
 pub mod canary;
 pub mod manifest;

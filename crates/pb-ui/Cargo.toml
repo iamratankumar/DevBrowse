@@ -2,6 +2,8 @@
 name    = "pb-ui"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # Iced (wgpu backend) is the UI framework — added in Phase 8 (Module 39).
 # iced = { version = "0.13", features = ["wgpu"] }

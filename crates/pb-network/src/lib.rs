@@ -3,6 +3,8 @@
 //! Identity-aware request routing. All DNS uses DoH; system DNS never used
 //! in strict mode. Ad/tracker blocking always on for all modes.
 
+#![forbid(unsafe_code)]
+
 pub mod blocklist;
 pub mod coordinator;
 pub mod dns;

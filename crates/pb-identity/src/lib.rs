@@ -3,6 +3,8 @@
 //! Every tab's IdentityProfile is created here, locked at spawn,
 //! and immutable for the tab's lifetime.
 
+#![forbid(unsafe_code)]
+
 pub mod lifecycle;
 pub mod profile;
 pub mod registry;

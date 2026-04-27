@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Module 2.1 hardening: minimum-required token scope.
+# Individual jobs may escalate via job-level `permissions:` if ever needed.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -49,6 +54,17 @@ jobs:
 
       - name: Clippy (warnings = errors)
         run: cargo clippy --workspace -- -D warnings
+
+  # Supply-chain audit — Module 2.1 hardening.
+  # Blocks PRs introducing yanked, vulnerable, or non-allowlisted-license deps.
+  cargo-deny:
+    name: Supply chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
 
   # Adversarial fingerprint surface tests — Phase 10 (Module 61).
   fp-surface:

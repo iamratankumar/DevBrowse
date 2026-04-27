@@ -1,0 +1,41 @@
+# cargo-deny — supply chain audit for DevBrowse.
+# Module 2.1 hardening. Run: cargo deny check
+#
+# This file is the security gate for every dependency entering the workspace.
+# Tightening over time is fine; loosening requires explicit review.
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked  = "deny"
+ignore  = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Zlib",
+    "CC0-1.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions    = "warn"
+wildcards            = "deny"
+# Internal workspace path-deps (pb-ipc, pb-config) carry no version field;
+# this is fine because they're never published to crates.io. Wildcards are
+# still denied for *external* deps — exactly what we want.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git      = "deny"
+allow-registry   = ["https://github.com/rust-lang/crates.io-index"]

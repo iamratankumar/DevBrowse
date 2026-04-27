@@ -3,6 +3,8 @@
 //! Technology: Iced (wgpu backend) — added in Module 39.
 //! Linux MVP target; macOS/Windows in v2.
 
+#![forbid(unsafe_code)]
+
 pub mod address_bar;
 pub mod bookmarks;
 pub mod devtools;

@@ -21,6 +21,9 @@ edition    = "2021"
 authors    = ["DevBrowse Contributors"]
 license    = "MPL-2.0"
 repository = "https://github.com/iamratankumar/DevBrowse"
+# Workspace crates are internal — never published to crates.io.
+# This also satisfies cargo-deny's wildcard-path check.
+publish    = false
 
 # ── workspace-wide dependency versions ─────────────────────────────────────
 # Individual crates reference these with `{ workspace = true }`.
@@ -42,6 +45,10 @@ prost = "0.12"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # networking (hyper 1.x + rustls — no OpenSSL)
+# NOTE: hyper-rustls trust-store choice is deferred to Module 18 (pb-network).
+# Lock decision pending: hermetic webpki-roots vs OS native trust store.
+# Default features intentionally NOT disabled here; pb-network's Cargo.toml
+# will pin features when it's implemented.
 hyper        = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util   = { version = "0.1", features = ["client", "client-legacy", "tokio"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
@@ -58,3 +65,16 @@ sha2 = "0.10"
 # logging / tracing
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── release profile hardening — Module 2.1 ────────────────────────────────
+# Browser parses hostile input; integer overflow must panic, not wrap.
+# `panic = "abort"` prevents unwinding across future libxul FFI boundaries.
+[profile.release]
+panic           = "abort"
+overflow-checks = true
+lto             = "fat"
+codegen-units   = 1
+strip           = "symbols"
+
+[profile.dev]
+overflow-checks = true

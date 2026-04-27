@@ -2,9 +2,13 @@
 name    = "pb-fingerprint"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
-# NOTE: pb-fingerprint will use unsafe FFI for Gecko WebIDL overrides.
-# unsafe is intentionally NOT forbidden in this crate.
+# NOTE: pb-fingerprint currently forbids unsafe (Module 2.1). When Gecko
+# WebIDL FFI lands, downgrade lib.rs to `#![deny(unsafe_code)]` and require
+# `#[allow(unsafe_code)]` on the specific FFI module so unsafe blocks remain
+# visible in code review. See lib.rs doc-comment for details.
 
 [dependencies]
 pb-ipc    = { workspace = true }
