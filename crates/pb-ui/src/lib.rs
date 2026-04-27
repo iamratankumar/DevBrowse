@@ -1,10 +1,11 @@
-//! Browser UI — Layer 1, Phase 8 (Modules 39–54).
+//! Browser UI — Layer 1, Phase 8 (Modules 39–55).
 //!
 //! Technology: Iced (wgpu backend) — added in Module 39.
 //! Linux MVP target; macOS/Windows in v2.
 
 pub mod address_bar;
 pub mod bookmarks;
+pub mod devtools;
 pub mod downloads;
 pub mod find;
 pub mod history;
