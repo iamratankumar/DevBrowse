@@ -1,0 +1,12 @@
+[package]
+name    = "pb-extensions"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pb-ipc    = { workspace = true }
+pb-config = { workspace = true }
+tokio     = { workspace = true }
+uuid      = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }

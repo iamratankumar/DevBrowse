@@ -1,0 +1,11 @@
+[package]
+name    = "pb-platform"
+version.workspace = true
+edition.workspace = true
+
+# pb-platform defines OS adapter traits only.
+# No pb-* imports — pure trait definitions, no inter-crate coupling.
+# Concrete implementations deferred to v2 per architecture.
+
+[dependencies]
+thiserror = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name    = "pb-config"
+version.workspace = true
+edition.workspace = true
+
+# pb-config is the shared config contract crate.
+# Dependency rule: ANY crate may depend on this one (config structs only).
+# This crate must NOT depend on any other pb-* crate.
+
+[dependencies]
+serde     = { workspace = true }
+toml      = { workspace = true }
+thiserror = { workspace = true }
+uuid      = { workspace = true }
+tracing   = { workspace = true }

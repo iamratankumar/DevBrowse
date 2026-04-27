@@ -1,0 +1,1 @@
+// InputAdapter trait — v2.

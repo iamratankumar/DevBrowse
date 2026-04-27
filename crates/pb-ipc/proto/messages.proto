@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package pb_ipc;
+
+// DevBrowse inter-process message schema.
+// All IPC messages for every process boundary are defined here.
+// Implementation: Phase 5 (Module 5).

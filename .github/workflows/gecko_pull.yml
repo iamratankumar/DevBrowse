@@ -1,0 +1,36 @@
+name: Gecko Tag Compatibility Check
+
+# Runs automatically when a new Gecko tag is detected, or manually triggered.
+# Phase 10 (Module 58 + 60): wrapper compatibility checker CI gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gecko_tag:
+        description: "Gecko release tag to check against (e.g. v128.0)"
+        required: true
+        type: string
+  schedule:
+    # Weekly check for new Gecko tags every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+
+jobs:
+  gecko-compatibility:
+    name: Wrapper compatibility check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run wrapper checker
+        run: |
+          echo "Gecko tag: ${{ inputs.gecko_tag || 'scheduled-check' }}"
+          echo "Wrapper compatibility checker implemented in Module 58."
+          # cargo run -p pb-update --bin wrapper-checker -- --gecko-tag "${{ inputs.gecko_tag }}"

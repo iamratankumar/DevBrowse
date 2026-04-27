@@ -1,0 +1,1 @@
+// NotificationAdapter trait — v2.

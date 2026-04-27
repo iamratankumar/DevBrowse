@@ -1,0 +1,1 @@
+// WindowAdapter trait — v2.

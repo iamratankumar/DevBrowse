@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pb-ipc",
+    "crates/pb-config",
+    "crates/pb-platform",
+    "crates/pb-identity",
+    "crates/pb-storage",
+    "crates/pb-network",
+    "crates/pb-fingerprint",
+    "crates/pb-gpu",
+    "crates/pb-extensions",
+    "crates/pb-update",
+    "crates/pb-ui",
+    "crates/pb-browser",
+]
+
+[workspace.package]
+version    = "0.1.0"
+edition    = "2021"
+authors    = ["DevBrowse Contributors"]
+license    = "MPL-2.0"
+repository = "https://github.com/iamratankumar/DevBrowse"
+
+# ── workspace-wide dependency versions ─────────────────────────────────────
+# Individual crates reference these with `{ workspace = true }`.
+# Do NOT change versions here without auditing every consumer crate.
+[workspace.dependencies]
+# inter-crate (allowed by any crate per architecture dependency rule)
+pb-ipc    = { path = "crates/pb-ipc" }
+pb-config = { path = "crates/pb-config" }
+
+# async runtime
+tokio = { version = "1", features = ["full"] }
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+toml  = "0.8"
+prost = "0.12"
+
+# storage
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# networking (hyper 1.x + rustls — no OpenSSL)
+hyper        = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util   = { version = "0.1", features = ["client", "client-legacy", "tokio"] }
+hyper-rustls = { version = "0.27", features = ["http2"] }
+http         = "1"
+
+# error handling
+thiserror = "1"
+anyhow    = "1"
+
+# crypto / identifiers
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+
+# logging / tracing
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

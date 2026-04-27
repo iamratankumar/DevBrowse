@@ -1,0 +1,1 @@
+// NetworkAdapter trait — v2.

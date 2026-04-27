@@ -1,0 +1,19 @@
+[package]
+name    = "pb-ipc"
+version.workspace = true
+edition.workspace = true
+
+# pb-ipc is the shared IPC contract crate.
+# Dependency rule: ANY crate may depend on this one (message types only).
+# This crate must NOT depend on any other pb-* crate.
+
+[dependencies]
+prost     = { workspace = true }
+tokio     = { workspace = true }
+uuid      = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+[build-dependencies]
+prost-build = "0.12"

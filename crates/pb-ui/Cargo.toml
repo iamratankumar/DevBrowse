@@ -1,0 +1,15 @@
+[package]
+name    = "pb-ui"
+version.workspace = true
+edition.workspace = true
+
+# Iced (wgpu backend) is the UI framework — added in Phase 8 (Module 39).
+# iced = { version = "0.13", features = ["wgpu"] }
+
+[dependencies]
+pb-ipc    = { workspace = true }
+pb-config = { workspace = true }
+tokio     = { workspace = true }
+uuid      = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }

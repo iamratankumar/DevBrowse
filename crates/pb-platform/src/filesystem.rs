@@ -1,0 +1,1 @@
+// FileSystemAdapter trait — v2.

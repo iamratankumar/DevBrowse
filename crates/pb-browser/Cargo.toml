@@ -1,0 +1,21 @@
+[package]
+name    = "pb-browser"
+version.workspace = true
+edition.workspace = true
+
+# pb-browser is the main orchestrator binary.
+# Communicates with all other processes exclusively via IPC (pb-ipc).
+# Must NOT import pb-identity, pb-storage, etc. directly — no exceptions.
+
+[[bin]]
+name = "pb-browser"
+path = "src/main.rs"
+
+[dependencies]
+pb-ipc             = { workspace = true }
+pb-config          = { workspace = true }
+tokio              = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
