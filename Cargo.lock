@@ -713,6 +713,7 @@ dependencies = [
  "prost",
  "prost-build",
  "serde",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",

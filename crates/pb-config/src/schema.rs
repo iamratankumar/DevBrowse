@@ -32,6 +32,10 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiConfig,
     #[serde(default)]
+    pub history: HistoryConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
     pub wizard: WizardConfig,
     #[serde(default)]
     pub sync: SyncConfig,
@@ -48,6 +52,8 @@ impl Default for Config {
             storage: StorageConfig::default(),
             search: SearchConfig::default(),
             ui: UiConfig::default(),
+            history: HistoryConfig::default(),
+            logging: LoggingConfig::default(),
             wizard: WizardConfig::default(),
             sync: SyncConfig::default(),
             telemetry: TelemetryConfig::default(),
@@ -227,6 +233,12 @@ pub struct UiConfig {
     /// UX flagship feature (architecture §8): identity selector visible in
     /// the tab strip. Default ON; user can hide via settings.
     pub show_identity_in_tab_bar: bool,
+    /// L28: tab/sidebar layout. Default = SidebarHover (locked v1 UX).
+    pub tab_layout: TabLayout,
+    /// L28 accessibility floor: when true, the UI honours the OS
+    /// "reduce transparency / reduce motion" setting and disables vibrancy
+    /// effects in favour of solid backgrounds with WCAG AA contrast.
+    pub reduce_transparency: bool,
 }
 
 impl Default for UiConfig {
@@ -234,6 +246,8 @@ impl Default for UiConfig {
         Self {
             theme: Theme::default(),
             show_identity_in_tab_bar: true,
+            tab_layout: TabLayout::default(),
+            reduce_transparency: false,
         }
     }
 }
@@ -288,6 +302,63 @@ pub struct TelemetryConfig {
     pub enabled: bool,
 }
 
+/// Tab strip layout variants (L28).
+///
+/// `SidebarHover` is the locked v1 default (left sidebar that opens on hover
+/// from a hamburger affordance). `TopHorizontal` and `FullVertical` are
+/// opt-in alternatives the user can select in Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TabLayout {
+    /// Default (L28): left sidebar that appears on hover.
+    #[default]
+    SidebarHover,
+    /// Classic top horizontal tab bar.
+    TopHorizontal,
+    /// Always-visible vertical tab list on the left.
+    FullVertical,
+}
+
+/// History data retention policy (L29, Standard mode only).
+///
+/// Strict mode never writes history regardless of this setting (§3.3).
+/// The daily sweep in pb-storage auto-purges entries older than the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HistoryRetention {
+    /// L29 default: keep history indefinitely.
+    #[default]
+    Forever,
+    /// Wipe history at session end.
+    Session,
+    /// Keep only the last 7 days.
+    Week,
+    /// Keep only the last 30 days.
+    Month,
+}
+
+/// History settings (L29).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryConfig {
+    /// Retention window. Standard mode only — Strict never writes history.
+    pub retention: HistoryRetention,
+}
+
+/// Disk logging opt-in (L27).
+///
+/// Default: logs stay in a RAM ring buffer and are dropped at exit (L27).
+/// When `disk_logging_enabled = true`, logs are written to disk with
+/// auto-redaction of URLs, form bodies, identity names, and partition keys
+/// before any write. No log line crosses the network without per-session
+/// explicit user consent (e.g. attaching to a bug report).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LoggingConfig {
+    /// L27: default false — ephemeral RAM ring buffer.
+    pub disk_logging_enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +399,24 @@ mod tests {
         assert!(
             c.ui.show_identity_in_tab_bar,
             "Identity selector is a flagship UX (§8)"
+        );
+        assert_eq!(
+            c.ui.tab_layout,
+            TabLayout::SidebarHover,
+            "L28: sidebar-hover is the locked v1 default layout"
+        );
+        assert!(
+            !c.ui.reduce_transparency,
+            "L28: transparency not forced off by default; user opts in via OS setting"
+        );
+        assert_eq!(
+            c.history.retention,
+            HistoryRetention::Forever,
+            "L29: history retention default is forever"
+        );
+        assert!(
+            !c.logging.disk_logging_enabled,
+            "L27: logs stay in RAM by default; disk opt-in only"
         );
         assert!(!c.wizard.completed);
         assert!(c.wizard.completed_at_version.is_none());

@@ -22,7 +22,7 @@ pub mod schema;
 
 pub use loader::{load, save, validate, ConfigError};
 pub use schema::{
-    Config, FingerprintLevel, Mode, NetworkConfig, PrivacyConfig, SearchConfig, SearchEngine,
-    StorageConfig, SyncBackend, SyncConfig, TelemetryConfig, Theme, UiConfig, WizardConfig,
-    CURRENT_SCHEMA_VERSION,
+    Config, FingerprintLevel, HistoryConfig, HistoryRetention, LoggingConfig, Mode, NetworkConfig,
+    PrivacyConfig, SearchConfig, SearchEngine, StorageConfig, SyncBackend, SyncConfig, TabLayout,
+    TelemetryConfig, Theme, UiConfig, WizardConfig, CURRENT_SCHEMA_VERSION,
 };
