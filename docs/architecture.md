@@ -302,8 +302,8 @@ separately numbered. Phase numbering reflects dependency order.
 | 1 | Workspace + Cargo setup | ✅ done |
 | 2 | Platform adapter trait surface (5 adapters + capability `FileHandle` + `GestureToken` + `register_dropped_path`) | ✅ done |
 | 3 | `pb-config` schema (Config struct, Mode enum, defaults, validation, atomic save, owner-only file mode) | ✅ done |
-| 4 | `pb-ipc` transport (Tokio + Unix sockets, framing, max-message-size) | next |
-| 5 | `pb-ipc` messages (protobuf types via prost-build) | |
+| 4 | `pb-ipc` transport (Tokio + Unix sockets, framing, max-message-size) | ✅ done |
+| 5 | `pb-ipc` messages (protobuf types via prost-build) | ✅ done |
 
 ### Phase 2 — Identity (Modules 6–12)
 

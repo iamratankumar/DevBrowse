@@ -2,6 +2,199 @@ syntax = "proto3";
 
 package pb_ipc;
 
-// DevBrowse inter-process message schema.
-// All IPC messages for every process boundary are defined here.
-// Implementation: Phase 5 (Module 5).
+// DevBrowse inter-process message schema — Module 5.
+//
+// Every message crossing a process boundary is defined here.
+// prost-build generates Rust types from this file; do not edit the generated
+// output directly — change this file and rebuild.
+//
+// SECURITY INVARIANT (§5.1): all messages arriving from a renderer process
+// are untrusted. Brokers MUST validate every field before acting on them.
+// Validation belongs in the receiving broker crate, not here.
+
+// ── Envelope (routing wrapper) ────────────────────────────────────────────────
+
+// Every IPC message is wrapped in an Envelope. The broker reads `message_type`
+// to dispatch without deserializing the full payload.
+message Envelope {
+  MessageType message_type = 1;
+  bytes       payload      = 2; // serialized inner message (prost-encoded)
+  string      request_id   = 3; // uuid v4 — callers use this to correlate responses
+}
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+
+  // Lifecycle
+  PROCESS_READY    = 1;
+  SHUTDOWN         = 2;
+
+  // Identity — Phase 2 (Modules 6–12)
+  SPAWN_TAB        = 10;
+  DESTROY_TAB      = 11;
+  IDENTITY_WARNING = 12;
+
+  // Storage — Phase 3 (Modules 13–18)
+  STORAGE_READ     = 20;
+  STORAGE_WRITE    = 21;
+  STORAGE_WIPE     = 22;
+
+  // Network — Phase 4 (Modules 19–25)
+  NETWORK_REQUEST  = 30;
+  NETWORK_RESPONSE = 31;
+
+  // Filesystem capability — Phase 1 / Phase 8
+  FILE_PICKER_OPEN = 40;
+  FILE_PICKER_SAVE = 41;
+  FILE_HANDLE_REF  = 42;
+
+  // Input — used by GestureToken minting in pb-ipc (§5.4)
+  INPUT_EVENT      = 50;
+
+  // Error
+  ERROR_RESPONSE   = 99;
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+message ProcessReady {
+  string process_id = 1; // uuid v4 identifying the sub-process
+}
+
+message Shutdown {
+  bool graceful = 1; // false = immediate abort
+}
+
+// ── Identity (Phase 2) ────────────────────────────────────────────────────────
+
+// Mirrors pb-config::Mode. Conversion adapters live in pb-identity (which can
+// import both pb-ipc and pb-config). pb-ipc does NOT import pb-config.
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  MODE_STANDARD    = 1;
+  MODE_STRICT      = 2;
+}
+
+// Core identity profile descriptor sent over IPC.
+// Architecture §3.1: profile_id + name + mode are immutable for a tab's lifetime.
+message IdentityProfile {
+  string profile_id = 1; // uuid v4
+  string name       = 2; // user-visible label ("Personal", "Work")
+  Mode   mode       = 3;
+}
+
+message SpawnTab {
+  IdentityProfile profile = 1;
+  string          url     = 2;
+}
+
+message DestroyTab {
+  string tab_id = 1; // uuid v4
+}
+
+message IdentityWarning {
+  string profile_id = 1;
+  string code       = 2; // machine-readable warning code
+  string message    = 3; // human-readable detail (shown in UI)
+}
+
+// ── Storage (Phase 3) ─────────────────────────────────────────────────────────
+
+// Partition key is a hex-encoded sha256 derived in pb-storage (Module 14).
+// The gatekeeper (Module 15) verifies the key matches the request context.
+// SECURITY INVARIANT (§5.2): no storage message bypasses the gatekeeper.
+
+message StorageRead {
+  string partition_key = 1; // hex sha256
+  string key           = 2;
+}
+
+message StorageWrite {
+  string partition_key = 1;
+  string key           = 2;
+  bytes  value         = 3;
+}
+
+message StorageWipe {
+  string partition_key = 1; // wipes all keys under this partition
+}
+
+// ── Network (Phase 4) ─────────────────────────────────────────────────────────
+
+message NetworkRequest {
+  string              request_id = 1; // uuid v4
+  string              url        = 2;
+  string              method     = 3;
+  map<string, string> headers    = 4;
+  bytes               body       = 5;
+  string              profile_id = 6; // uuid v4 — for partition key derivation
+}
+
+message NetworkResponse {
+  string              request_id = 1;
+  uint32              status     = 2;
+  map<string, string> headers    = 3;
+  bytes               body       = 4;
+}
+
+// ── Filesystem capability ─────────────────────────────────────────────────────
+
+// Transmits an opaque FileHandle capability across process boundaries.
+// The receiver reconstructs via FileHandle::from_raw(handle_id).
+//
+// SECURITY INVARIANT (§5.3): FileHandleRef MUST NOT be forwarded to renderers.
+// Only brokers may hold FileHandle tokens. A renderer receiving this message
+// MUST be treated as a protocol violation and the connection dropped.
+message FileHandleRef {
+  uint64 handle_id = 1;
+}
+
+message FilePickerRequest {
+  string             title   = 1;
+  repeated FileFilter filters = 2;
+}
+
+message FileFilter {
+  string          label      = 1;
+  repeated string extensions = 2; // without leading dot (e.g. "pdf", "txt")
+}
+
+// ── Input events ──────────────────────────────────────────────────────────────
+
+// SECURITY INVARIANT (§5.4 / §5.5): InputEventMsg carries NO timestamp.
+// Keystroke timing is a fingerprinting and side-channel vector. If a timestamp
+// field is ever added here it MUST be quantized to ≥1 ms in pb-fingerprint
+// before reaching content — adding it without that guard is a security defect.
+message InputEventMsg {
+  oneof event {
+    KeyEvent   key   = 1;
+    MouseEvent mouse = 2;
+    WheelEvent wheel = 3;
+  }
+}
+
+message KeyEvent {
+  uint32 code      = 1;
+  bool   pressed   = 2;
+  uint32 modifiers = 3;
+}
+
+message MouseEvent {
+  int32  x       = 1;
+  int32  y       = 2;
+  uint32 button  = 3; // 0=none 1=left 2=right 3=middle 4+=other
+  bool   pressed = 4;
+}
+
+message WheelEvent {
+  float dx = 1;
+  float dy = 2;
+}
+
+// ── Error ─────────────────────────────────────────────────────────────────────
+
+message ErrorResponse {
+  string request_id = 1;
+  string code       = 2; // machine-readable (e.g. "PERMISSION_DENIED")
+  string message    = 3; // human-readable detail for logging
+}

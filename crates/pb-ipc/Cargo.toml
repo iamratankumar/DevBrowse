@@ -22,3 +22,5 @@ tempfile = "3"
 
 [build-dependencies]
 prost-build = "0.12"
+# protox is a pure-Rust protobuf compiler — eliminates the protoc system dep.
+protox = "0.5"

@@ -9,9 +9,6 @@ pub mod messages;
 // transport.rs handles platform gating internally; always declare the module.
 pub mod transport;
 
-// IpcError and MAX_MESSAGE_BYTES are defined unconditionally in transport.rs.
-pub use transport::{IpcError, MAX_MESSAGE_BYTES};
-
-// Platform-specific connection types — present on Unix and Windows only.
-#[cfg(any(unix, windows))]
-pub use transport::{IpcConnection, IpcListener, IpcReadHalf, IpcWriteHalf};
+pub use transport::{
+    IpcConnection, IpcError, IpcListener, IpcReadHalf, IpcWriteHalf, MAX_MESSAGE_BYTES,
+};
