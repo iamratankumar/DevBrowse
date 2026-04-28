@@ -1,8 +1,8 @@
 # DevBrowse — Architecture
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Status:** Locked — change requires explicit re-locking with rationale  
-**Last revised:** 2026-04-27
+**Last revised:** 2026-04-28
 
 ---
 
@@ -85,7 +85,11 @@ breaking re-architecture that requires explicit user discussion.
 | L22 | Cryptographic primitives: **audited and standardized only** (Argon2id, XChaCha20-Poly1305, HKDF, Ed25519/X25519). Protocol composition is ours; primitive set is upgradable (PQC migration tracked). No homemade ciphers/hashes/PRFs. | Schneier's law: anyone can design a cipher they themselves can't break. We compose vetted primitives; we don't invent them. |
 | L23 | First-launch setup wizard: **per-feature opt-in** (sync, telemetry, search engine, privacy mode, fingerprint level, translation/spellcheck, etc.). Declined features are **disabled at code-path level**, not just UI-hidden. | "Defaults are architecture" — the wizard makes the defaults a conscious user choice, not a buried setting. |
 | L24 | Local encrypted backup/import: **same vault format as sync**, exported to a user-controlled file. Works fully offline. Cross-platform import (desktop ↔ mobile). | Users who decline cloud entirely still get device portability. Vault format reuse keeps the surface area minimal. |
-| L25 | DoH provider whitelist: **NextDNS (default)**, Cloudflare, Quad9, or user-supplied custom HTTPS URL. **System DNS allowed only in Standard mode** (§3.2); forbidden in Strict (§3.3, DoH-only). | Privacy-respecting curated set, no Google DNS. Config rejects malformed URLs at load time so a tampered config never silently downgrades resolution. |
+| L25 | DoH provider whitelist: **Quad9 (default)**, NextDNS (wizard-personalized), Cloudflare, or user-supplied custom HTTPS URL (covers self-hosted DNS). **System DNS allowed only in Standard mode** (§3.2); forbidden in Strict (§3.3, DoH-only). NextDNS in the wizard requires a per-account config ID and is persisted as `Custom { url }`; declining the ID falls back to Quad9. | Privacy-respecting curated set, no Google DNS. Quad9 is no-log + malware blocklist out of the box. NextDNS without a config ID adds no privacy value over Quad9, so we refuse to ship that as the silent default. Config rejects malformed URLs at load so a tampered config cannot silently downgrade resolution. |
+| L26 | Tracker / ad blocking counters: per-tab badge in the address bar shows total blocked items; full breakdown (ads vs trackers vs fingerprint attempts) in the **Network Viewer** (Module 60). Counters are pure-local, in-process, never persisted, never network-shipped. Module 21 (blocklist) emits classified events; Module 60 surfaces them. Ad/tracker blocking itself remains always-on per the original lock (privacy-browser-context). | Visibility builds trust without leaking data. Counters are ephemeral so even a forensic disk read shows nothing. |
+| L27 | Logging policy: **ephemeral session-only debug logs by default** (RAM ring buffer, dropped at exit, never written to disk). User can opt-in to disk logs for bug reporting; opt-in logs auto-redact URLs, form bodies, identity profile names, and partition keys before any write. **No log line ever crosses the network without explicit per-session user consent** (e.g. attaching to a bug report). | Logs are the easiest accidental data leak in any browser. Default-ephemeral + redact-on-write keeps the floor high. |
+| L28 | UI design intent: **modern translucent / Apple-glass aesthetic** (vibrancy/blur on platforms that support it: macOS NSVisualEffectView, Windows 11 Mica/Acrylic, Linux compositor-dependent). Default chrome layout = **left-vertical sidebar that opens on hover from a hamburger affordance**, with tab search at sidebar top, tab list in the middle, bookmarks as a right-edge icon column with hover popovers, and a 3-dot overflow menu at the sidebar top for settings / passwords / less-frequent items. Address bar is prominent on focus and fades when idle (always reveals on any keyboard activity, never on mouse-only). Top-horizontal and full-vertical tab layouts are **opt-in alternatives** in settings; sidebar-hover is the v1 default. **Accessibility floor (mandatory):** respect OS "reduce transparency"; WCAG AA contrast on all text-on-glass surfaces (apply a subtle solid backdrop behind text where needed); every chrome surface fully keyboard-navigable. | "Defaults are architecture" extends to UX. The sidebar-hover layout is the most distinctive choice and matches the bookmark-column idea. Locking the accessibility floor up front prevents the glass aesthetic from boxing out users who need contrast or reduced motion. |
+| L29 | History retention (Standard mode only): user-selectable in `[history] retention = "forever" \| "session" \| "week" \| "month"`. **Default: `"forever"`** (matches user expectation; wizard surfaces the choice). Strict mode never writes history (already locked at §3.3 / privacy-browser-context). The history process auto-purges entries older than the retention window on a daily sweep. | Users who want a clean trail get it; users who want history get it. Either way, no surprise. The wizard prompt makes the choice conscious, not buried. |
 
 ---
 
@@ -296,9 +300,9 @@ separately numbered. Phase numbering reflects dependency order.
 | # | Module | Status |
 |---|---|---|
 | 1 | Workspace + Cargo setup | ✅ done |
-| 2 | Platform adapter trait surface (5 adapters + capability `FileHandle` + `GestureToken`) | ✅ done |
-| 3 | `pb-config` schema (Config struct, Mode enum, defaults, validation) | next |
-| 4 | `pb-ipc` transport (Tokio + Unix sockets, framing, max-message-size) | |
+| 2 | Platform adapter trait surface (5 adapters + capability `FileHandle` + `GestureToken` + `register_dropped_path`) | ✅ done |
+| 3 | `pb-config` schema (Config struct, Mode enum, defaults, validation, atomic save, owner-only file mode) | ✅ done |
+| 4 | `pb-ipc` transport (Tokio + Unix sockets, framing, max-message-size) | next |
 | 5 | `pb-ipc` messages (protobuf types via prost-build) | |
 
 ### Phase 2 — Identity (Modules 6–12)
@@ -518,6 +522,7 @@ browser category. They must ship with v1 to differentiate.
 | 2026-04-27 | v1.0 — initial lock | All decisions through Module 2.1 hardening. Locks L1–L20. |
 | 2026-04-27 | v1.1 — mobile + sync + wizard | Mobile (iOS/Android) moved from non-goal to Phase 12 (design-disciplined now, implemented later). Sync added as Phase 11.5 (BYO-cloud, E2E client-side). Locks L21–L24. Wizard takes Module 64 slot; Terminal moved to Future Improvements (§11). |
 | 2026-04-27 | v1.2 — DoH whitelist | L25 added: curated DoH provider set (NextDNS default, Cloudflare, Quad9, custom HTTPS), System DNS gated to Standard mode only. Reflected in `pb-config` schema (`DohProvider` enum) and validated at load/save time. Aligns config with the pre-existing pb-network whitelist stub. |
+| 2026-04-28 | v1.3 — DoH default + counters / logging / UI / history locks | L25 default flipped from NextDNS to **Quad9** (NextDNS without an account config ID adds no privacy value as a silent default; wizard now enforces config-ID entry and persists as `Custom { url }`, falling back to Quad9 if declined). L26 added: tracker/ad block counters surfaced in address-bar badge + Network Viewer (always local, never persisted). L27 added: ephemeral RAM-only debug logs by default, opt-in disk logs are redaction-gated, no network egress without per-session user consent. L28 added: modern translucent UI design intent — sidebar-hover default with bookmark icon column, top/vertical layouts opt-in; accessibility floor locked alongside (reduce-transparency honored, WCAG AA, full keyboard nav). L29 added: standard-mode history retention selector (`forever \| session \| week \| month`, default `forever`); strict still never writes history. Schema reflects L25 default; UI/history config keys land with their respective modules to avoid orphaned fields. |
 
 ---
 

@@ -92,10 +92,25 @@ pub struct PrivacyConfig {
 
 /// Curated DoH provider whitelist (L25).
 ///
-/// L25: NextDNS is the locked default. Alternates: Cloudflare, Quad9, or a
-/// user-specified `Custom` HTTPS URL. `System` (OS resolver, no DoH) is
-/// allowed ONLY in Standard mode per architecture §3.2 and is rejected at
-/// config load when `privacy.default_mode = Strict` (§3.3 mandates DoH-only).
+/// L25 (v1.3): **Quad9 is the locked default.** Alternates: NextDNS,
+/// Cloudflare, or a user-specified `Custom` HTTPS URL. `System` (OS resolver,
+/// no DoH) is allowed ONLY in Standard mode per architecture §3.2 and is
+/// rejected at config load when `privacy.default_mode = Strict` (§3.3
+/// mandates DoH-only).
+///
+/// NextDNS personalization (L25 wizard rule): NextDNS's privacy benefit comes
+/// from a per-account config ID embedded in the endpoint URL
+/// (`https://dns.nextdns.io/<id>`). The first-launch wizard (Module 64)
+/// enforces this: if a user picks NextDNS, they MUST enter their config ID;
+/// the wizard then persists the choice as `Custom { url: <full URL> }`. If
+/// the user declines to provide an ID, the wizard falls back to Quad9. The
+/// bare `NextDns` variant remains available for advanced users editing TOML
+/// directly (it resolves to NextDNS's generic anycast endpoint with no
+/// account-level filtering).
+///
+/// Self-hosted DNS path: users running their own DoH resolver pick
+/// `Custom { url }`. The validator (loader.rs) enforces HTTPS-only
+/// (or http://localhost / http://127.0.0.1 for local self-host development).
 ///
 /// The full provider whitelist (with concrete endpoint URLs and revocation
 /// posture) is enforced by Module 20 (`pb-network/src/dns/whitelist.rs`).
@@ -104,19 +119,23 @@ pub struct PrivacyConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind")]
 pub enum DohProvider {
+    /// L25 default: Quad9 (no-log, includes malware blocklist).
     #[default]
+    #[serde(rename = "quad9")]
+    Quad9,
+    /// Generic NextDNS endpoint. Wizard-driven flow upgrades to
+    /// `Custom { url }` once the user supplies their config ID.
     #[serde(rename = "nextdns")]
     NextDns,
     #[serde(rename = "cloudflare")]
     Cloudflare,
-    #[serde(rename = "quad9")]
-    Quad9,
     /// OS resolver (no DoH). Standard mode only; rejected when
     /// `privacy.default_mode = Strict`.
     #[serde(rename = "system")]
     System,
     /// User-specified HTTPS DoH URL. Validated at config load: must be
-    /// https://. Whitelist of known-safe customs is enforced by Module 20.
+    /// https://. Used for personalized NextDNS, self-hosted resolvers, or
+    /// any other operator the user chooses to trust.
     #[serde(rename = "custom")]
     Custom { url: String },
 }
@@ -124,7 +143,7 @@ pub enum DohProvider {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
-    /// L25: DoH provider for new IdentityProfiles. Default = NextDNS.
+    /// L25: DoH provider for new IdentityProfiles. Default = Quad9.
     pub provider: DohProvider,
 }
 
@@ -289,8 +308,9 @@ mod tests {
         );
         assert_eq!(
             c.network.provider,
-            DohProvider::NextDns,
-            "L25: NextDNS is the locked default DoH provider"
+            DohProvider::Quad9,
+            "L25 (v1.3): Quad9 is the locked default DoH provider; NextDNS \
+             requires a wizard-supplied config ID and is persisted as Custom"
         );
         assert!(
             c.storage.strict_wipe_on_close,
