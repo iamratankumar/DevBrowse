@@ -657,8 +657,6 @@ dependencies = [
  "serde",
  "thiserror",
  "toml",
- "tracing",
- "uuid",
 ]
 
 [[package]]

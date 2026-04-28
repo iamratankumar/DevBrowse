@@ -17,6 +17,7 @@
 //!   No glob, no traversal, no path-from-string. Period.
 
 use crate::PlatformError;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque capability token returned by the picker.
@@ -71,6 +72,30 @@ pub trait FileSystemAdapter: Send + Sync {
 
     /// Show OS save dialog. `Ok(None)` = user cancelled.
     fn save_picker(&self, opts: FilePickerOptions) -> Result<Option<FileHandle>, PlatformError>;
+
+    /// Register a path the user dragged onto a window, minting a `FileHandle`.
+    ///
+    /// SECURITY INVARIANT — never weaken:
+    ///   This method is the **third and only other** legitimate capability
+    ///   source for `FileHandle` (alongside `open_picker` / `save_picker`).
+    ///   It MUST be called ONLY from the chrome's OS-level drop-event handler
+    ///   — i.e. the code path that observed the user actually dragging a file
+    ///   onto a window. The OS witnessed the gesture; the path is therefore
+    ///   trust-equivalent to a picker selection.
+    ///
+    /// SECURITY INVARIANT — never bypass:
+    ///   This method MUST NOT be exposed to:
+    ///     * renderers (directly or via IPC)
+    ///     * any code path that accepts renderer-supplied data
+    ///     * any caller that has not just received an OS drop event
+    ///   A renderer-callable version of this would defeat the entire capability
+    ///   model — it would let a malicious page mint a `FileHandle` for any path
+    ///   it can construct as a string.
+    ///
+    /// Backends canonicalize the path internally, store it under a fresh
+    /// handle, and return that handle. Cross-process transmission to renderers
+    /// goes through pb-ipc, which serializes only the inner `u64` per §5.3.
+    fn register_dropped_path(&self, path: &Path) -> Result<FileHandle, PlatformError>;
 
     /// Read the bytes of a previously picked file.
     fn read_handle(&self, handle: FileHandle) -> Result<Vec<u8>, PlatformError>;
