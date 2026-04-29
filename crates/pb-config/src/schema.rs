@@ -41,6 +41,24 @@ pub struct Config {
     pub sync: SyncConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    /// L30: HTTPS-Only lock.
+    #[serde(default)]
+    pub https_only: HttpsOnlyConfig,
+    /// L32: tracking-parameter stripping.
+    #[serde(default)]
+    pub url_param_strip: UrlParamStripConfig,
+    /// L34: Encrypted Client Hello posture.
+    #[serde(default)]
+    pub ech: EchConfig,
+    /// L35: WebRTC posture (Standard-mode opt-out; Strict is always off).
+    #[serde(default)]
+    pub webrtc: WebRtcConfig,
+    /// L36: bounce-tracker storage purge window.
+    #[serde(default)]
+    pub bounce_tracker: BounceTrackerConfig,
+    /// L37: cookie-banner auto-decline.
+    #[serde(default)]
+    pub cookie_banner: CookieBannerConfig,
 }
 
 impl Default for Config {
@@ -57,6 +75,12 @@ impl Default for Config {
             wizard: WizardConfig::default(),
             sync: SyncConfig::default(),
             telemetry: TelemetryConfig::default(),
+            https_only: HttpsOnlyConfig::default(),
+            url_param_strip: UrlParamStripConfig::default(),
+            ech: EchConfig::default(),
+            webrtc: WebRtcConfig::default(),
+            bounce_tracker: BounceTrackerConfig::default(),
+            cookie_banner: CookieBannerConfig::default(),
         }
     }
 }
@@ -359,6 +383,115 @@ pub struct LoggingConfig {
     pub disk_logging_enabled: bool,
 }
 
+/// L30: HTTPS-Only lock.
+///
+/// All outbound navigations are upgraded to `https://`. A user-initiated
+/// per-host downgrade requires an explicit confirmation modal in pb-ui;
+/// no silent fallback exists. Strict-mode tabs ignore any per-host
+/// downgrade entry. v1 default = locked ON; the field exists so the
+/// wizard (L23) can record the user's affirmative choice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpsOnlyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for HttpsOnlyConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// L32: tracking-parameter stripping for outbound navigations and bookmark
+/// writes. Curated parameter list ships through the Module 21 blocklist
+/// track; the toggle here is the global on/off. Default ON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UrlParamStripConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for UrlParamStripConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// L34: Encrypted Client Hello posture.
+///
+/// `Preferred` (default) — use ECH when the server advertises it via HTTPS
+/// RR; fall back to standard SNI silently otherwise. `Required` — refuse
+/// to connect to servers without an advertised ECH config (used by Strict
+/// mode automatically; selectable in Standard for power users).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EchMode {
+    #[default]
+    Preferred,
+    Required,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct EchConfig {
+    pub mode: EchMode,
+}
+
+/// L35: WebRTC posture for **Standard mode**. Strict mode disables WebRTC
+/// entirely regardless of this field (architecture §3.3 / §5 lock).
+///
+/// Default ON in Standard for compatibility with video-call sites. Users
+/// who never use WebRTC can flip this off at the wizard or in Settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebRtcConfig {
+    /// Standard-mode toggle. Strict ignores this and is always off.
+    #[serde(default = "default_true")]
+    pub enabled_in_standard: bool,
+}
+
+impl Default for WebRtcConfig {
+    fn default() -> Self {
+        Self {
+            enabled_in_standard: true,
+        }
+    }
+}
+
+fn default_bounce_tracker_purge_days() -> u32 {
+    45
+}
+
+/// L36: storage created by an "intermediate" site (visited only via
+/// cross-site redirect, never as a top-level navigation) is auto-purged
+/// after `purge_days`. Default = 45 (matches Mozilla's tuning).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BounceTrackerConfig {
+    /// Bounded at load: must be in 7..=365.
+    #[serde(default = "default_bounce_tracker_purge_days")]
+    pub purge_days: u32,
+}
+
+impl Default for BounceTrackerConfig {
+    fn default() -> Self {
+        Self {
+            purge_days: default_bounce_tracker_purge_days(),
+        }
+    }
+}
+
+/// L37: cookie-banner auto-decline. Default OFF until the wizard (L23)
+/// records the user's choice; the wizard offers ON-by-default for new
+/// users. Rule list is shipped via the Module 21 blocklist track.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct CookieBannerConfig {
+    pub auto_decline_enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +556,84 @@ mod tests {
         assert!(!c.sync.enabled, "L21: sync OFF until wizard");
         assert!(c.sync.backend.is_none());
         assert!(!c.telemetry.enabled, "Anti-goal: telemetry forbidden");
+        assert!(c.https_only.enabled, "L30: HTTPS-Only locked ON by default");
+        assert!(
+            c.url_param_strip.enabled,
+            "L32: tracking-param strip ON by default"
+        );
+        assert_eq!(c.ech.mode, EchMode::Preferred, "L34: ECH preferred default");
+        assert!(
+            c.webrtc.enabled_in_standard,
+            "L35: WebRTC ON in Standard by default; Strict overrides at runtime"
+        );
+        assert_eq!(
+            c.bounce_tracker.purge_days, 45,
+            "L36: bounce-tracker purge default is 45 days"
+        );
+        assert!(
+            !c.cookie_banner.auto_decline_enabled,
+            "L37: cookie-banner auto-decline OFF until wizard records the choice"
+        );
+    }
+
+    #[test]
+    fn https_only_round_trip() {
+        let mut c = Config::default();
+        c.https_only.enabled = false;
+        let s = toml::to_string(&c).expect("serialize");
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn ech_required_round_trip() {
+        let mut c = Config::default();
+        c.ech.mode = EchMode::Required;
+        let s = toml::to_string(&c).expect("serialize");
+        assert!(
+            s.contains("mode = \"required\""),
+            "expected lowercase 'required', got:\n{s}"
+        );
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn webrtc_disabled_round_trip() {
+        let mut c = Config::default();
+        c.webrtc.enabled_in_standard = false;
+        let s = toml::to_string(&c).expect("serialize");
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn bounce_tracker_custom_round_trip() {
+        let mut c = Config::default();
+        c.bounce_tracker.purge_days = 90;
+        let s = toml::to_string(&c).expect("serialize");
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn cookie_banner_post_wizard_round_trip() {
+        let mut c = Config::default();
+        c.cookie_banner.auto_decline_enabled = true;
+        let s = toml::to_string(&c).expect("serialize");
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn url_param_strip_unknown_field_rejected() {
+        // deny_unknown_fields propagates to every new sub-section.
+        let s = "version = 1\n[url_param_strip]\nenabled = true\nmystery = true\n";
+        let r: Result<Config, _> = toml::from_str(s);
+        assert!(
+            r.is_err(),
+            "url_param_strip subsection must reject unknowns"
+        );
     }
 
     #[test]

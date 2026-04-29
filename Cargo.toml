@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pb-ipc",
     "crates/pb-config",
+    "crates/pb-sandbox",
     "crates/pb-platform",
     "crates/pb-identity",
     "crates/pb-storage",
@@ -30,8 +31,9 @@ publish    = false
 # Do NOT change versions here without auditing every consumer crate.
 [workspace.dependencies]
 # inter-crate (allowed by any crate per architecture dependency rule)
-pb-ipc    = { path = "crates/pb-ipc" }
-pb-config = { path = "crates/pb-config" }
+pb-ipc     = { path = "crates/pb-ipc" }
+pb-config  = { path = "crates/pb-config" }
+pb-sandbox = { path = "crates/pb-sandbox" }
 
 # async runtime
 tokio = { version = "1", features = ["full"] }

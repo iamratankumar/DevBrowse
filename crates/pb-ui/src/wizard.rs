@@ -4,7 +4,7 @@
 // disabled at code-path level, not just UI-hidden.
 //
 // Wizard pages (in order):
-//   1. Privacy mode default (Standard / Strict)
+//   1. Privacy mode default select new tab open (Standard / Strict)
 //   2. Sync backend selection (BYO-cloud, L21) — or skip
 //   3. Search engine (L18: DDG default, curated set)
 //   4. DoH provider (L25: Quad9 default; NextDNS requires config ID entry)
@@ -12,6 +12,7 @@
 //   6. Fingerprint normalization level (L8/§5.5)
 //   7. History retention (L29: forever default)
 //   8. Disk logging opt-in (L27: OFF by default)
+//   9. Theme Selection Default system (system/light/dark/custom)
 //
 // L23 invariants — never weaken:
 //   * Declined features must be disabled at code-path level.

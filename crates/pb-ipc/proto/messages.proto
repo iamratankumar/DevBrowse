@@ -33,6 +33,8 @@ enum MessageType {
   SPAWN_TAB        = 10;
   DESTROY_TAB      = 11;
   IDENTITY_WARNING = 12;
+  SUSPEND_TAB      = 13;
+  RESUME_TAB       = 14;
 
   // Storage — Phase 3 (Modules 13–18)
   STORAGE_READ     = 20;
@@ -96,6 +98,26 @@ message IdentityWarning {
   string profile_id = 1;
   string code       = 2; // machine-readable warning code
   string message    = 3; // human-readable detail (shown in UI)
+}
+
+// Module 10 suspension semantics — orchestrator-driven freeze / thaw.
+//
+// Reasons mirror pb-identity::suspension::SuspendReason. Conversion adapters
+// live in pb-identity (which can import both pb-ipc and pb-config).
+enum SuspendReason {
+  SUSPEND_REASON_UNSPECIFIED = 0;
+  SUSPEND_REASON_USER_REQUESTED = 1;
+  SUSPEND_REASON_BACKGROUND_IDLE = 2;
+  SUSPEND_REASON_MEMORY_PRESSURE = 3;
+}
+
+message SuspendTab {
+  string tab_id = 1; // uuid v4
+  SuspendReason reason = 2;
+}
+
+message ResumeTab {
+  string tab_id = 1;
 }
 
 // ── Storage (Phase 3) ─────────────────────────────────────────────────────────

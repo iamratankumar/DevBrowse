@@ -761,8 +761,10 @@ version = "0.1.0"
 dependencies = [
  "pb-config",
  "pb-ipc",
+ "serde",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "uuid",
 ]
@@ -803,6 +805,16 @@ name = "pb-platform"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "pb-sandbox"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

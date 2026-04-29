@@ -124,6 +124,16 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         }
     }
 
+    // L36: bounce-tracker purge window must be in 7..=365 days. Outside that
+    // band the policy stops being meaningful (too short → breaks normal
+    // sites; too long → defeats the purpose).
+    if !(7..=365).contains(&cfg.bounce_tracker.purge_days) {
+        return Err(ConfigError::Validation(format!(
+            "bounce_tracker.purge_days must be in 7..=365, got {}",
+            cfg.bounce_tracker.purge_days
+        )));
+    }
+
     Ok(())
 }
 
@@ -264,6 +274,26 @@ mod tests {
                 expected,
             }) => assert_eq!(expected, CURRENT_SCHEMA_VERSION),
             other => panic!("expected SchemaVersion error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bounce_tracker_below_min() {
+        let mut cfg = Config::default();
+        cfg.bounce_tracker.purge_days = 3;
+        match validate(&cfg) {
+            Err(ConfigError::Validation(_)) => {}
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bounce_tracker_above_max() {
+        let mut cfg = Config::default();
+        cfg.bounce_tracker.purge_days = 1000;
+        match validate(&cfg) {
+            Err(ConfigError::Validation(_)) => {}
+            other => panic!("expected Validation error, got {other:?}"),
         }
     }
 

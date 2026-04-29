@@ -1,6 +1,6 @@
 # DevBrowse — Architecture
 
-**Version:** 1.3  
+**Version:** 1.6  
 **Status:** Locked — change requires explicit re-locking with rationale  
 **Last revised:** 2026-04-28
 
@@ -72,7 +72,7 @@ breaking re-architecture that requires explicit user discussion.
 | L9 | Process model: **identity-grouped** with **Standard** and **Strict** modes | See §3. |
 | L10 | Filesystem access: **capability-based** via opaque `FileHandle`, OS-picker-gated | Path strings never cross the trait surface. See §5.3. |
 | L11 | Clipboard / sensitive input: **gesture-token-gated** at the type system level | Move-only `GestureToken`, single-use. See §5.4. |
-| L12 | Crate dependency rule: any crate may import **`pb-ipc` and `pb-config`**; no other cross-crate imports | Enforced at Cargo.toml level. See §4. |
+| L12 | Crate dependency rule: any crate may import **`pb-ipc`, `pb-config`, and `pb-sandbox`**; no other cross-crate imports | Enforced at Cargo.toml level. See §4. |
 | L13 | Unsafe code policy: **`#![forbid(unsafe_code)]`** on every crate; downgrade to `deny` only on FFI modules with `#[allow(unsafe_code)]` annotation | See §5.6. |
 | L14 | Release profile: `panic=abort`, `overflow-checks=true`, `lto=fat`, `codegen-units=1`, `strip=symbols` | Browser parses hostile input — overflow must panic, not wrap. `panic=abort` prevents unwinding through libxul FFI. |
 | L15 | Supply chain: **`cargo-deny` gate in CI** (advisories, licenses, bans, sources) | Every transitive dependency reviewed. |
@@ -90,6 +90,16 @@ breaking re-architecture that requires explicit user discussion.
 | L27 | Logging policy: **ephemeral session-only debug logs by default** (RAM ring buffer, dropped at exit, never written to disk). User can opt-in to disk logs for bug reporting; opt-in logs auto-redact URLs, form bodies, identity profile names, and partition keys before any write. **No log line ever crosses the network without explicit per-session user consent** (e.g. attaching to a bug report). | Logs are the easiest accidental data leak in any browser. Default-ephemeral + redact-on-write keeps the floor high. |
 | L28 | UI design intent: **modern translucent / Apple-glass aesthetic** (vibrancy/blur on platforms that support it: macOS NSVisualEffectView, Windows 11 Mica/Acrylic, Linux compositor-dependent). Default chrome layout = **left-vertical sidebar that opens on hover from a hamburger affordance**, with tab search at sidebar top, tab list in the middle, bookmarks as a right-edge icon column with hover popovers, and a 3-dot overflow menu at the sidebar top for settings / passwords / less-frequent items. Address bar is prominent on focus and fades when idle (always reveals on any keyboard activity, never on mouse-only). Top-horizontal and full-vertical tab layouts are **opt-in alternatives** in settings; sidebar-hover is the v1 default. **Accessibility floor (mandatory):** respect OS "reduce transparency"; WCAG AA contrast on all text-on-glass surfaces (apply a subtle solid backdrop behind text where needed); every chrome surface fully keyboard-navigable. | "Defaults are architecture" extends to UX. The sidebar-hover layout is the most distinctive choice and matches the bookmark-column idea. Locking the accessibility floor up front prevents the glass aesthetic from boxing out users who need contrast or reduced motion. |
 | L29 | History retention (Standard mode only): user-selectable in `[history] retention = "forever" \| "session" \| "week" \| "month"`. **Default: `"forever"`** (matches user expectation; wizard surfaces the choice). Strict mode never writes history (already locked at §3.3 / privacy-browser-context). The history process auto-purges entries older than the retention window on a daily sweep. | Users who want a clean trail get it; users who want history get it. Either way, no surprise. The wizard prompt makes the choice conscious, not buried. |
+| L30 | **HTTPS-Only mode is the default.** All outbound navigations are upgraded to `https://`; an `http://` request is only issued after the user clicks an explicit per-host downgrade in a confirmation modal (no silent fallback, no auto-retry on TLS error). Strict mode disallows the downgrade entirely. Validated in pb-network (Module 22 headers + Module 23 TLS). | Every modern browser ships HTTPS-Only behind a setting. Locking it on by default closes the largest passive-network leak users have. |
+| L31 | **Referer policy:** `strict-origin-when-cross-origin` in Standard mode; `no-referrer` in Strict mode. Header is rewritten by pb-network before the request hits the wire. No site-level override path in v1. | Default browser policy still leaks origin paths cross-site. Locking the header at the broker keeps it consistent regardless of what content JS sets. |
+| L32 | **URL parameter stripping:** outbound navigations and bookmark writes have known tracking parameters removed (`utm_*`, `gclid`, `fbclid`, `mc_eid`, `_ga`, `igshid`, `vero_id`, `wickedid`, plus the curated list maintained in the Module 21 blocklist track). Bookmarks store the stripped URL; the navigation that the user typed proceeds with the stripped URL. | Re-shareable links shouldn't carry attribution beacons. Stripping at the broker keeps the policy out of every renderer's hands. |
+| L33 | **Network-state partitioning:** HTTP cache, DNS cache, connection pool, ALT-SVC cache, and HSTS cache are all keyed by `partition_key` (§3.5). No cross-partition reuse, no cross-site connection coalescing. | Same partition-key discipline that storage uses — extended to the entire network state. Closes the connection-pool side channel and the cache-timing oracle. |
+| L34 | **Encrypted Client Hello (ECH):** preferred when the server advertises HTTPS RR records with an ECH config; falls back to standard SNI without a handshake-failure leak. Disabled in Standard only by an explicit settings toggle; in Strict mode, ECH is mandatory when available and standard SNI is permitted only when the server has no ECH config (logged as a warning surfaced via Module 11). | Plaintext SNI is the last passive identifier on the wire. ECH adoption is mid-rollout; default-on with graceful fallback gets us the privacy when it's available without breaking compat. |
+| L35 | **WebRTC constraints:** peer connections require an explicit per-site permission grant (Module 59 permission center). ICE candidates use mDNS hostnames; private IPv4/IPv6 / link-local addresses are filtered out of candidate strings before they reach JS. **In Strict mode, WebRTC is fully disabled** (the API surface returns "not supported"). Module 25 owns enforcement. | WebRTC's IP-leak surface is the most-cited fingerprint vector. Default-deny in Strict, default-mDNS-only in Standard, never raw private IPs to content. |
+| L36 | **Bounce tracker mitigation (navigational tracking protection):** storage created by an "intermediate" site — one the user visited only via cross-site redirect, never as a top-level navigation — is auto-purged after a short window (default: 45 days, matching Mozilla's tuning). Module 18 (strict-wipe) is the per-tab variant; this is the cross-session variant. | Bounce trackers convert each referral into persistent state. Time-boxed purge of intermediate-only storage neutralizes the vector without breaking sites users actually visit. |
+| L37 | **Cookie banner auto-decline:** opt-in at the first-launch wizard (default: ON for new users, easily disabled). Injects "decline / reject all" responses to common consent banners using a curated rule set (Consent-O-Matic and "I Don't Care About Cookies" style). Rule list is versioned and shipped via the Module 21 blocklist track (signed updates). | Most users would decline if asked properly. Automating the decline both saves clicks and prevents banner-fatigue "accept all" mistakes. Wizard-gated so the user knows it's happening. |
+| L38 | **Reproducible builds:** every release artifact is built reproducibly under a locked Rust toolchain version and locked dependency tree (Cargo.lock + cargo-vet pin). The CI publishes the artifact's `sha256` alongside the binary; an independent rebuild from the same source must produce a byte-identical artifact. Reproducibility checks are part of the release-promotion gate. | Reproducibility is what makes signed builds *meaningful* — without it, a compromised CI can ship malware under a valid signature. |
+| L39 | **Release signing (dual scheme):** every release artifact carries **(a)** a GPG detached signature from an offline release key (rotated annually, fingerprint published in the repo) **and (b)** a Sigstore signature recorded in the Rekor public transparency log. Update-channel signing (`pb-update`, §5.7) reuses the offline key; binary distribution outside the auto-updater (e.g. distro packagers) verifies via the GPG signature alone. | GPG covers offline / air-gapped verification (distro maintainers); Sigstore gives a public transparency log that catches a compromised release-key event. Both together close more of the supply-chain threat model than either alone. |
 
 ---
 
@@ -143,19 +153,65 @@ partition_key = sha256( site_origin || identity_profile_id || context_id )
 Computed by pb-storage (Module 14). Every storage read/write checks this key
 via the gatekeeper (Module 15) — no exceptions, no bypass paths.
 
+`context_id` is **fresh per Strict tab** so two Strict tabs of the same
+`identity_profile_id` cannot read each other's storage (defense-in-depth on
+top of the per-tab renderer rule §3.3). Standard tabs of the same
+`identity_profile_id` use a stable `context_id` per profile so they share
+storage as users expect.
+
+### 3.6 Mode-toggle UX (one-way Standard → Strict)
+
+The mode toggle is the flagship UX element that makes "private window" go
+away as a separate concept. Rules:
+
+1. **New tab opens in Standard** by default (matches `privacy.default_mode`,
+   user-configurable in the wizard / settings).
+2. **One-time prominent "Convert to Privacy tab" affordance** sits inside
+   every freshly-opened Standard tab, with a short inline explanation of
+   what changes (per-tab renderer, no extensions, no DevTools, no history,
+   strict-wipe on close, separate cookies / session, max fingerprint
+   normalization). The affordance is dismissible per-tab and per-session;
+   suppressing it permanently is a settings opt-out (Module 52).
+3. **Once a tab is Strict, it is Strict for life.** There is no Strict →
+   Standard path. The only way out is to close ("kill") the tab. This is a
+   security invariant, not a UX choice — re-using a Strict-mode renderer
+   for Standard work would leak the very isolation the user just asked for.
+   Enforced by the absence of any retarget API on `LifecycleManager`
+   (architecture §3.1) and by the per-tab renderer rule (§3.3).
+4. **Standard-mode link clicks open new tabs in Standard.** When the user
+   clicks a link inside a Standard tab, the new tab inherits Standard mode
+   by default. A non-modal popover at the top of the new tab offers
+   "Open this in a Privacy tab instead" for a few seconds, then fades. The
+   user can disable the popover in settings.
+5. **Cookies / session firewall (Standard ↔ Strict).** A Strict tab spawned
+   from the same URL as an authenticated Standard tab MUST NOT see the
+   Standard tab's cookies, sessionStorage, IndexedDB, cache, or any other
+   per-origin state. Enforcement: Strict tabs run under a separate
+   `identity_profile_id` (the user's "Strict mode" profile, distinct from
+   their everyday Standard profile) **and** a fresh `context_id` per tab,
+   so the partition key (§3.5) differs from the Standard partition key for
+   the same origin. The storage gatekeeper (§5.2) rejects any cross-key
+   read; the network state partition (L33) rejects any cached connection
+   reuse.
+6. **No "Strict by default" silent escalation.** If the user prefers
+   Strict-by-default, they set it explicitly in settings (`privacy.default_mode = "strict"`).
+   This makes the user's choice conscious and visible, in line with L23.
+
 ---
 
 ## 4. Crate topology and dependency rule
 
-DevBrowse is a 12-crate workspace today (Phase 1). Phase 11.5 will introduce
-sync crates (`pb-vault`, `pb-sync`, `pb-cloud` — exact split locked when the
-phase begins). Phase 12 introduces mobile crates (engine adapter for
-WebKit/GeckoView, mobile UI shells, mobile build glue).
+DevBrowse is a 13-crate workspace today (Phase 1, expanded in v1.5 to add
+`pb-sandbox`). Phase 11.5 will introduce sync crates (`pb-vault`, `pb-sync`,
+`pb-cloud` — exact split locked when the phase begins). Phase 12 introduces
+mobile crates (engine adapter for WebKit/GeckoView, mobile UI shells,
+mobile build glue).
 
 ```
 pb-browser              (orchestrator binary)
    ├── pb-ipc           (shared message types — anyone may import)
-   └── pb-config        (shared config types — anyone may import)
+   ├── pb-config        (shared config types — anyone may import)
+   └── pb-sandbox       (OS sandbox profiles — anyone may import; Module 12)
 
 pb-platform             (OS adapter trait surface — leaf crate, zero pb-* deps)
 
@@ -171,12 +227,18 @@ pb-ui                   (Iced chrome)
 
 ### 4.1 Dependency rule (locked)
 
-A crate may import **`pb-ipc` and `pb-config` only**. No `pb-X → pb-Y` imports
-beyond those two. Violations are caught at Cargo.toml review.
+A crate may import **`pb-ipc`, `pb-config`, and `pb-sandbox` only**. No
+`pb-X → pb-Y` imports beyond those three. Violations are caught at
+Cargo.toml review.
 
-`pb-platform` is a strict leaf — it imports neither `pb-ipc` nor `pb-config`.
-This guarantees OS adapter traits are usable in any context, including future
-backend test harnesses.
+`pb-platform` is a strict leaf — it imports neither `pb-ipc` nor `pb-config`
+nor `pb-sandbox`. This guarantees OS adapter traits are usable in any
+context, including future backend test harnesses.
+
+`pb-sandbox` is also a leaf — it has zero pb-* imports. It is in the
+"anyone may import" tier so that every spawn site (renderer, network broker,
+storage broker) can construct or receive a `SandboxProfile` and call
+`apply()` at startup without taking a dep on pb-identity.
 
 ### 4.2 Why this rule
 
@@ -267,8 +329,13 @@ no admin override, no test bypass.
 
 - Every renderer runs under an OS-level sandbox profile (seccomp on Linux,
   AppArmor profile, mac sandbox.plist, Windows job objects).
-- Sandbox profiles are owned by Module 12 (pb-identity area) and applied
-  before any renderer begins parsing untrusted content.
+- Sandbox profiles live in the **`pb-sandbox` crate** (Module 12) and are
+  applied before any renderer begins parsing untrusted content. v1.5 moved
+  the typed profile out of `pb-identity` and into its own crate so that
+  every spawn site (renderer, network broker, storage broker) can use it
+  without taking a dep on `pb-identity`. The real syscall enforcement
+  (Module 12.1, deferred) lands in the same `pb-sandbox` crate, with
+  unsafe confined to a future `enforce` submodule per L13.
 - The sandbox is the **kernel-level** boundary; the IPC trust boundary
   (§5.1) is the **process-level** boundary. Both hold simultaneously.
 
@@ -285,6 +352,31 @@ no admin override, no test bypass.
   reports (URLs, form contents, request bodies, identity profile names).
 - Crash reports are scrubbed in-process before any disk write or network
   send. See Module 82.
+
+### 5.11 Site-isolation tradeoff (Standard mode)
+
+- Under §3.4, two **Standard** tabs of the same `identity_profile_id` may
+  share a single renderer process even when they navigate to different
+  top-level sites. This is intentional — it keeps the process count down
+  for users who run dozens of tabs under one identity.
+- Tradeoff: a malicious page co-resident with another site in the same
+  renderer can attempt cross-site Spectre / Meltdown reads against
+  in-process memory. The kernel sandbox (§5.8) does not mitigate
+  same-process side channels.
+- Mitigation in v1:
+  - **Strict mode is per-tab renderer (§3.3)** — never co-resident with
+    anything else. Users who need site-isolation guarantees use Strict.
+  - **Cross-origin headers are honored.** Pages that send
+    `Cross-Origin-Opener-Policy: same-origin` and
+    `Cross-Origin-Embedder-Policy: require-corp` are placed in their own
+    renderer regardless of `identity_profile_id` (Module 8 scheduler hook,
+    deferred to Phase 5 alongside the WebIDL surface).
+  - **Spectre mitigations stay enabled** at the Gecko level (process
+    isolation primitives, JIT mitigations) for every renderer.
+- Future: an opt-in "per-site renderer in Standard mode" toggle is reserved
+  for Phase 8 (Module 52 settings) when we have benchmarks to show the
+  process-count cost is acceptable. Lock it as deferred — do not ship
+  without measurement.
 
 ---
 
@@ -307,15 +399,15 @@ separately numbered. Phase numbering reflects dependency order.
 
 ### Phase 2 — Identity (Modules 6–12)
 
-| # | Module |
-|---|---|
-| 6 | `IdentityProfile` struct + builder + validation |
-| 7 | Profile registry + persistence wiring |
-| 8 | Renderer scheduler (renderer-sharing rule §3.4) |
-| 9 | Lifecycle (spawn → suspend → kill, immutable for tab) |
-| 10 | Suspension semantics (tab freeze) |
-| 11 | Identity warnings (signals to UI layer) |
-| 12 | **OS sandbox profile** (seccomp / AppArmor / mac / Win) |
+| # | Module | Status |
+|---|---|---|
+| 6 | `IdentityProfile` struct + builder + validation | ✅ done |
+| 7 | Profile registry + persistence wiring | ✅ done |
+| 8 | Renderer scheduler (renderer-sharing rule §3.4) | ✅ done |
+| 9 | Lifecycle (spawn → suspend → kill, immutable for tab) | ✅ done |
+| 10 | Suspension semantics (tab freeze) | ✅ done |
+| 11 | Identity warnings (signals to UI layer) | ✅ done |
+| 12 | **OS sandbox profile** (seccomp / AppArmor / mac / Win) — `pb-sandbox` crate | ✅ done |
 
 ### Phase 3 — Storage (Modules 13–18)
 
@@ -421,6 +513,7 @@ service-worker contexts to catch normalization gaps.
 | # | Module |
 |---|---|
 | 80 | Startup sequence |
+| 80.5 | **OS sandbox enforcement (Module 12.1)** — real seccomp-bpf (Linux) / AppArmor profile (Linux) / `sandbox_init` plist (macOS) / Windows Job Object + Restricted Token. Lands in `pb-sandbox` with `unsafe` confined to a private `enforce` submodule (`#![deny(unsafe_code)]` + `#[allow(unsafe_code)]` on that one module per L13). **v1.0 ship blocker** — Module 12 v1 ships only the typed profile + `apply()` no-op; without 80.5 the kernel boundary in §5.8 is documentation, not enforcement. |
 | 81 | Graceful shutdown |
 | 82 | **Crash containment + report scrubbing** |
 
@@ -460,7 +553,7 @@ Module list locks when the phase begins. Reserved areas:
 | iOS UI shell | SwiftUI; chrome design from §8 ported to native idioms. |
 | Android UI shell | Jetpack Compose; chrome design from §8 ported to Material. |
 | Capability adapters | `UIDocumentPicker` (iOS), Storage Access Framework (Android) — both already capability-shaped, fit `FileHandle` model directly. |
-| Sandbox | Delegates to OS app sandbox (iOS/Android handle this themselves). Module 12 (kernel sandbox) is desktop-only. |
+| Sandbox | Delegates to OS app sandbox (iOS/Android handle this themselves). Module 12 (`pb-sandbox` kernel sandbox) is desktop-only; `apply()` is a no-op on iOS/Android. |
 | Sync transport | iCloud container on iOS, SAF-routed Drive on Android — adapters reuse Phase 11.5 vault. |
 
 ---
@@ -524,6 +617,8 @@ browser category. They must ship with v1 to differentiate.
 | 2026-04-27 | v1.2 — DoH whitelist | L25 added: curated DoH provider set (NextDNS default, Cloudflare, Quad9, custom HTTPS), System DNS gated to Standard mode only. Reflected in `pb-config` schema (`DohProvider` enum) and validated at load/save time. Aligns config with the pre-existing pb-network whitelist stub. |
 | 2026-04-28 | v1.3 — DoH default + counters / logging / UI / history locks | L25 default flipped from NextDNS to **Quad9** (NextDNS without an account config ID adds no privacy value as a silent default; wizard now enforces config-ID entry and persists as `Custom { url }`, falling back to Quad9 if declined). L26 added: tracker/ad block counters surfaced in address-bar badge + Network Viewer (always local, never persisted). L27 added: ephemeral RAM-only debug logs by default, opt-in disk logs are redaction-gated, no network egress without per-session user consent. L28 added: modern translucent UI design intent — sidebar-hover default with bookmark icon column, top/vertical layouts opt-in; accessibility floor locked alongside (reduce-transparency honored, WCAG AA, full keyboard nav). L29 added: standard-mode history retention selector (`forever \| session \| week \| month`, default `forever`); strict still never writes history. Schema reflects L25 default; UI/history config keys land with their respective modules to avoid orphaned fields. |
 | 2026-04-28 | v1.4 — Cross-platform principle locked; schema gaps closed; UI module stubs added | **Cross-platform rule locked:** every crate in the workspace must compile on Linux, macOS, and Windows at all times. Platform-specific code is gated by `#[cfg(unix)]` / `#[cfg(windows)]` within a single module; the public API surface is identical on all platforms. **IPC transport (L4):** Unix backend uses AF_UNIX domain sockets (`tokio::net::UnixStream`). Windows backend uses named pipes (`tokio::net::windows::named_pipe`) with the same 4-byte BE length-prefix framing. `split()` on Windows serializes through a `Mutex` (single handle, not two-pipe duplex); upgrade to two-pipe if benchmarks show contention. A `compile_error!` guards all other platforms. **Schema gaps closed:** `HistoryConfig { retention }` (L29), `LoggingConfig { disk_logging_enabled }` (L27), and `UiConfig { tab_layout, reduce_transparency }` (L28) added to `pb-config` schema with correct locked defaults. **UI module stubs added:** Modules 58–62, 64 (file picker UI, permission center, network viewer, site customizer, PDF viewer, first-launch wizard) stubbed in `pb-ui` with full invariant comments. |
+| 2026-04-28 | v1.5 — Sandbox split into its own crate | Module 12 (OS sandbox profile) moved out of `pb-identity` and into a new top-level `pb-sandbox` crate. Workspace expanded from 12 to 13 crates. L12 amended: any crate may import `pb-ipc`, `pb-config`, **and `pb-sandbox`**; previously only the first two. Rationale: (1) `SandboxClass::Network` / `SandboxClass::Storage` are not identity concepts — putting them in `pb-identity` was a category error that scaled poorly; (2) `pb-storage` and `pb-network` need a sandbox profile but should not depend on `pb-identity` to get one; (3) Module 12.1 (real syscall enforcement) needs `unsafe`, and consolidating types + enforcement in one dedicated crate is more auditable than splitting policy across `pb-identity` + impl across `pb-platform`. Behavioral surface unchanged (same types, same `apply()` no-op contract). §4 topology, §5.8, and §6 Phase 2 module table updated to match. |
+| 2026-04-28 | v1.6 — Privacy-standard locks + mode-toggle UX + ship-gate scheduling | **Mode-toggle UX (§3.6)** locked: new tabs open Standard with a one-time prominent "Convert to Privacy tab" affordance; Strict is one-way (kill-tab-to-exit); Standard link-clicks open Standard with an offer-to-Strict popover; Strict tabs run under a separate `identity_profile_id` plus fresh `context_id` so cookies / session / cache from a Standard tab on the same URL never apply. **Partition-key context (§3.5)** clarified: `context_id` is fresh per Strict tab, stable per Standard profile. **Locks L30–L37** added: HTTPS-Only default, Referer policy (`strict-origin-when-cross-origin` / `no-referrer`), URL parameter stripping (UTM/gclid/fbclid + Module 21 list), network-state partitioning (cache / DNS / conn-pool / ALT-SVC / HSTS keyed by partition_key), Encrypted Client Hello (preferred when available, mandatory in Strict where supported), WebRTC constraints (per-site permission, mDNS-only ICE, fully off in Strict), bounce-tracker mitigation (45-day intermediate-only purge), cookie-banner auto-decline (wizard-gated, blocklist-track shipped). **Locks L38–L39** added: reproducible builds (locked toolchain + cargo-vet + sha256 publish + rebuild gate) and dual release signing (offline GPG key + Sigstore Rekor transparency log). **§5.11** added: Standard-mode site-isolation tradeoff documented — co-residence acknowledged, COOP/COEP isolation honored, Spectre mitigations on, opt-in per-site Standard renderers reserved for Phase 8. **§6 Phase 11** scheduled **Module 80.5** as the real OS sandbox enforcement work in `pb-sandbox/src/enforce.rs` and called it a v1.0 ship-blocker (Module 12 v1 is types-only). |
 
 ---
 
