@@ -8,7 +8,7 @@
 //!
 //! TOML field naming: `snake_case` everywhere (Rust convention). Enum tags
 //! use explicit per-variant `rename` so the on-disk strings are short and
-//! human-readable (`"webdav"`, `"google_drive"`, `"duckduckgo"`).
+//! human-readable (`"webdav"`, `"lan_cluster"`, `"duckduckgo"`).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -288,22 +288,27 @@ pub struct WizardConfig {
     pub completed_at_version: Option<u32>,
 }
 
-/// BYO-cloud sync backend (L21). Cloud impls land in Phase 11.5; the config
-/// shape is stable from v1 so settings persist across versions.
+/// Cluster-local sync backend (L21). v1.9 anti-goal: third-party SaaS cloud
+/// (Google Drive / iCloud / Dropbox / OneDrive) will never be added. The
+/// config shape is stable from v1.9 forward so settings persist across
+/// versions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum SyncBackend {
+    /// T1 (L21): direct LAN cluster transport (mDNS + QUIC + Ed25519 mTLS).
+    /// Default for paired devices.
+    #[serde(rename = "lan_cluster")]
+    LanCluster,
+    /// T2 (L21): hub-peer store-and-forward via a paired device that opted
+    /// in. Same encrypted-blob protocol as T1; hub sees ciphertext only.
+    #[serde(rename = "hub_peer")]
+    HubPeer,
+    /// T3 (L21): optional self-hosted WebDAV relay. Off by default; user
+    /// runs the relay (no DevBrowse-hosted service exists). Ciphertext
+    /// only; relay metadata (filenames, sizes, timing) is the only leak.
     #[serde(rename = "webdav")]
     WebDav { url: String },
-    #[serde(rename = "google_drive")]
-    GoogleDrive,
-    #[serde(rename = "icloud")]
-    ICloud,
-    #[serde(rename = "dropbox")]
-    Dropbox,
-    #[serde(rename = "onedrive")]
-    OneDrive,
-    /// L24: local file backup/import (no cloud round-trip).
+    /// L24: local file backup/import (no network round-trip).
     #[serde(rename = "local_file")]
     LocalFile { path: PathBuf },
 }

@@ -20,8 +20,6 @@
 //! pb-config already owns the permission helpers; we reuse them via
 //! `pb_config::permissions` rather than duplicating the logic.
 //!
-//! TODO(Module 9): lifecycle reads the registry at startup and holds the
-//!   `Arc<Mutex>` for the process lifetime.
 //! TODO(Module 27 / 82): registry path itself is non-secret, but the file
 //!   contents (profile names) ARE secret per L27. Never log the path's
 //!   contents; only log the path string.

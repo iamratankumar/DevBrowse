@@ -19,5 +19,5 @@ pub use error::PlatformError;
 pub use filesystem::{FileHandle, FilePickerOptions, FileSystemAdapter};
 pub use input::{GestureToken, InputAdapter, InputEvent, MouseButton};
 pub use network::{Connectivity, NetworkAdapter, ProxyConfig};
-pub use notification::{Notification, NotificationAdapter, PermissionState};
+pub use notification::{IconRef, Notification, NotificationAdapter, PermissionState};
 pub use window::{Position, Size, WindowAdapter, WindowId, WindowOptions};

@@ -1,8 +1,8 @@
 # DevBrowse — Architecture
 
-**Version:** 1.6  
+**Version:** 1.9  
 **Status:** Locked — change requires explicit re-locking with rationale  
-**Last revised:** 2026-04-28
+**Last revised:** 2026-04-30
 
 ---
 
@@ -26,16 +26,17 @@ revision.
 
 ### 1.1 Mission
 
-DevBrowse is a privacy-focused web browser written in Rust. The desktop builds
-(Linux / macOS / Windows) embed the Gecko engine via libxul FFI; mobile builds
-(iOS, Android — Phase 12) use platform-conditional engines (WebKit on iOS per
-App Store policy 2.5.6, GeckoView on Android). It is built to **change the
+DevBrowse is a privacy-focused web browser written in Rust. The v1 desktop
+builds (Linux / macOS) embed the Gecko engine via libxul FFI; Windows desktop
+is deferred to **Phase 11.9** (its own hardening pass — Modules 93-96); mobile
+builds (iOS, Android — Phase 12) use platform-conditional engines (WebKit on
+iOS per App Store policy 2.5.6, GeckoView on Android). It is built to **change the
 defaults** of the browser category: privacy is not a setting, it is the
 architecture. UX is modern and trust-building, not a Chromium reskin.
 
 ### 1.2 Non-goals (v1)
 
-- Self-hosted sync infrastructure — sync is **bring-your-own-cloud**, see L21.
+- DevBrowse-operated sync server — sync is **cluster-local**, see L21. Users who want cross-network sync run their own relay (no DevBrowse-hosted service exists).
 - Homemade cryptographic primitives — we compose audited primitives, never
   invent ciphers/hashes/PRFs (L22).
 - OS-platform passkey sync — Apple/Google own the keychain on iOS/Android;
@@ -43,6 +44,7 @@ architecture. UX is modern and trust-building, not a Chromium reskin.
 - Built-in password manager — deferred decision (§7).
 - Built-in autofill — deferred decision (§7).
 - Replacing the JS console — Gecko DevTools stays as-is in standard mode.
+- Third-party SaaS cloud sync (Google Drive / iCloud / Dropbox / OneDrive) — anti-goal, will never be added (L21).
 
 ### 1.3 Anti-goals (never)
 
@@ -81,7 +83,7 @@ breaking re-architecture that requires explicit user discussion.
 | L18 | Default search engine: **DuckDuckGo**, with user choice from a curated privacy-respecting set (DDG, Startpage, Brave Search, Mojeek) | Suggestions ON by default, but only via the user's chosen engine. |
 | L19 | File picker UX: **modern drag-and-drop entry surface** that calls the OS picker for capability minting | "Reading B" — drop zone + recent-picks chips + Browse button. Never traverses filesystem ourselves. See §5.3. |
 | L20 | Translation / spellcheck: **OFF by default**; when enabled, **local-only** (no remote service calls) | Both are content-leaking by default in mainstream browsers. |
-| L21 | Sync model: **bring-your-own-cloud, end-to-end encrypted client-side**. WebDAV baseline + Google Drive / iCloud / Dropbox / OneDrive. DevBrowse never operates sync infrastructure. | Zero server cost (no funding model needed); user owns the data; we hold nothing to subpoena. |
+| L21 | Sync model: **cluster-local, LAN-first, end-to-end encrypted, no DevBrowse server, no third-party cloud**. Initial pair on same WiFi via SPAKE2 6-digit code + mandatory 4-emoji fingerprint compare. **Pair-once persistent identity:** paired devices reconnect across any network or restart without re-pairing; mDNS announcements carry a rotating-nonce HMAC under the cluster key so paired peers identify each other while outsiders observing the LAN see only random bytes. Three transport tiers: direct LAN (mDNS + QUIC + Ed25519 mTLS), hub-peer forwarding (per-device opt-in, encrypted blobs only), optional self-hosted WebDAV relay (last resort, off by default). **Convergence guarantee:** all paired devices reach the same vault version via signed append-only sync log + per-peer high-water marks (Module 84); on reconnection each side ships missing entries until both sides match. **Vault auto-locks** on OS suspend, lid-close, and inactivity timeout. No SaaS cloud backend will ever be added (architectural anti-goal). | User data never touches a server we don't control; nothing to subpoena; pair-once persistent identity gives seamless multi-device UX without compromising LAN unlinkability for outsiders; cross-network sync requires user action (run own relay) — the honest tradeoff. |
 | L22 | Cryptographic primitives: **audited and standardized only** (Argon2id, XChaCha20-Poly1305, HKDF, Ed25519/X25519). Protocol composition is ours; primitive set is upgradable (PQC migration tracked). No homemade ciphers/hashes/PRFs. | Schneier's law: anyone can design a cipher they themselves can't break. We compose vetted primitives; we don't invent them. |
 | L23 | First-launch setup wizard: **per-feature opt-in** (sync, telemetry, search engine, privacy mode, fingerprint level, translation/spellcheck, etc.). Declined features are **disabled at code-path level**, not just UI-hidden. | "Defaults are architecture" — the wizard makes the defaults a conscious user choice, not a buried setting. |
 | L24 | Local encrypted backup/import: **same vault format as sync**, exported to a user-controlled file. Works fully offline. Cross-platform import (desktop ↔ mobile). | Users who decline cloud entirely still get device portability. Vault format reuse keeps the surface area minimal. |
@@ -120,7 +122,14 @@ A profile carries:
 ### 3.2 Standard mode
 
 - Renderers may be **shared across tabs of the same `profile_id`**.
-- Browser extensions allowed.
+- **Browser extensions: curated allowlist only.** Users may install
+  only extensions on the signed allowlist shipped via the Module 65
+  update channel. Free side-load from AMO is forbidden; there is no
+  link to addons.mozilla.org in the chrome and no manual `.xpi`
+  install path. Allowlisted extensions do **not** receive
+  outbound-traffic inspection capabilities (no `webRequest`-style
+  hook into `pb-network`); the network broker is intentionally
+  non-extensible to honor L30 / L33.
 - DevTools allowed.
 - DNS: DoH preferred, system DNS permitted as fallback.
 - Storage: standard partition-key isolation (per-site within identity).
@@ -202,10 +211,11 @@ away as a separate concept. Rules:
 ## 4. Crate topology and dependency rule
 
 DevBrowse is a 13-crate workspace today (Phase 1, expanded in v1.5 to add
-`pb-sandbox`). Phase 11.5 will introduce sync crates (`pb-vault`, `pb-sync`,
-`pb-cloud` — exact split locked when the phase begins). Phase 12 introduces
-mobile crates (engine adapter for WebKit/GeckoView, mobile UI shells,
-mobile build glue).
+`pb-sandbox`). Phase 11.5 introduces a single `pb-sync` crate (vault crypto +
+sync log + LAN discovery / pairing / transport + hub-peer forwarding +
+optional WebDAV relay). Password manager UI is a separate future phase, not
+part of `pb-sync`. Phase 12 introduces mobile crates (engine adapter for
+WebKit/GeckoView, mobile UI shells, mobile build glue).
 
 ```
 pb-browser              (orchestrator binary)
@@ -382,8 +392,9 @@ no admin override, no test bypass.
 
 ## 6. Module plan
 
-12 phases (Phase 1 through Phase 12, with Phase 11.5 between Orchestrator
-and Mobile). 87 modules through Phase 11.5; Phase 12 module count is reserved
+13 phases (Phase 1 through Phase 12, with Phase 11.5 between Orchestrator
+and Mobile and Phase 11.9 between Sync and Mobile). 96 modules through
+Phase 11.9; Phase 12 module count is reserved
 and locked when that phase begins. Sub-files within a module are not
 separately numbered. Phase numbering reflects dependency order.
 
@@ -413,12 +424,12 @@ separately numbered. Phase numbering reflects dependency order.
 
 | # | Module |
 |---|---|
-| 13 | Storage process bootstrap |
-| 14 | Partition key derivation (sha256) |
-| 15 | Gatekeeper (every read/write enforces partition key) |
-| 16 | Storage primitives (cookies, cache, IndexedDB, localStorage, sessionStorage) |
-| 17 | Service worker isolation |
-| 18 | Strict-wipe (per-identity wipe on tab close) |
+| 13 | Storage process bootstrap | ✅ done |
+| 14 | Partition key derivation (sha256) | ✅ done |
+| 15 | Gatekeeper (every read/write enforces partition key) | ✅ done |
+| 16 | Storage primitives (cookies, cache, localStorage, sessionStorage; IndexedDB deferred) | ✅ done |
+| 17 | Service worker isolation | ✅ done |
+| 18 | Strict-wipe (per-identity wipe on tab close) | ✅ done |
 
 ### Phase 4 — Network (Modules 19–25)
 
@@ -517,22 +528,59 @@ service-worker contexts to catch normalization gaps.
 | 81 | Graceful shutdown |
 | 82 | **Crash containment + report scrubbing** |
 
-### Phase 11.5 — Sync (BYO-Cloud) (Modules 83–87)
+### Phase 11.5 — Sync (Modules 83–92)
 
-End-to-end encrypted, bring-your-own-cloud sync. No DevBrowse server.
-Crate organization (single `pb-sync` vs split `pb-vault` / `pb-sync` /
-`pb-cloud`) is decided at phase start; locks below describe modules, not
-crate boundaries.
+End-to-end encrypted, LAN-first cluster sync. No DevBrowse server, no SaaS
+cloud backends. Three transport tiers in priority order:
+
+  1. **Direct LAN** (T1) — mDNS discovery + QUIC + Ed25519 mTLS. Default.
+  2. **Hub-peer forwarding** (T2) — any paired device can opt in as a hub
+     to store-and-forward encrypted blobs for offline cluster members.
+  3. **Self-hosted relay** (T3) — optional WebDAV; off by default. Only
+     transport tier that crosses networks; user must run the server.
+
+Initial pairing requires both devices on the same WiFi (LAN-only by design).
+Sync is foreground-only; mobile background sync is explicitly out of scope.
+Crate is single `pb-sync`. Password manager UI is its own future phase.
 
 | # | Module |
 |---|---|
-| 83 | **Vault crypto** — Argon2id (passphrase → master key), HKDF key ladder, XChaCha20-Poly1305 AEAD per blob, `zeroize` for in-memory secrets. Vault format spec (versioned). |
-| 84 | **Sync log** — append-only operation log per data type, vector clocks, periodic compaction. Per-record conflict surfacing for credentials (no silent overwrite). |
-| 85 | **Local backup / import** — export vault to a single user-controlled file; import on another device. Same format as sync (L24). |
-| 86 | **`CloudStorageAdapter` trait + WebDAV impl** — universal baseline; covers Nextcloud, Fastmail Files, self-host. |
-| 87 | **Cloud backends** — Google Drive, iCloud Drive, Dropbox, OneDrive. On Android route through SAF; on iOS use the app's iCloud container. |
+| 83 | **Vault crypto** — Argon2id (passphrase → master key), HKDF key ladder, XChaCha20-Poly1305 AEAD per blob, `zeroize` for in-memory secrets. Versioned vault format (L24). |
+| 84 | **Sync log** — per-record append-only op log, vector clocks, periodic compaction. LWW for tabs / history / bookmarks; per-record conflict surfacing for credentials (no silent overwrite). Each entry signed by originating device's Ed25519 key (tamper evidence even at hub-peer). |
+| 85 | **Local backup / import** — export vault to a single user-controlled file; import on another device. Same format as cluster sync. |
+| 86 | **LAN discovery** — mDNS service announce + browse for cluster devices on the local network. |
+| 87 | **LAN pairing** — SPAKE2 PAKE bootstrapped from a 6-digit code, mandatory 4-emoji fingerprint compare, Ed25519 identity key exchange. Both mDNS-list and QR-scan flows. Code expires in 90 seconds; max 5 wrong attempts then code burns (rate limit defeats online brute force of the 1M code space). Identity keys persisted via OS keystore (macOS Keychain / iOS Keychain / Win DPAPI / Android Keystore / libsecret). |
+| 88 | **LAN transport** — QUIC over UDP, mTLS via pinned Ed25519 keys (no CA), per-pair monotonic sequence numbers, 5-minute replay window. Forward secrecy via QUIC handshake. |
+| 89 | **Hub-peer forwarding** — per-device opt-in. Encrypted blobs queued for offline cluster members; recipient pulls; hub deletes after delivery. Per-recipient X25519 envelopes for direct-message blobs ensure hub cannot read them. |
+| 90 | **Send tab to device** — URL + title + scroll position, encrypted to recipient device's X25519 key. Auto-open with toast (`Open / Dismiss / Undo`) when recipient browser is foreground; queued banner on next launch otherwise. Source device + URL preview always shown; never silent. |
+| 91 | **Cluster key rotation** — on unpair, on schedule (90 days), on user request. Re-encrypt vault, re-sign sync log, broadcast new key to remaining cluster members. Removed device's stored data becomes useless. |
+| 92 | **Self-hosted relay (WebDAV)** — last-resort cross-network transport. Same encrypted-blob protocol as hub-peer; relay sees ciphertext only. Off by default. Hosted DevBrowse relay explicitly not in scope. |
 
-### Phase 12 — Mobile (iOS / Android) (Modules 88+, scope reserved)
+### Phase 11.9 — Windows hardening (Modules 93–96)
+
+Windows support is deferred to its own phase. Pre-existing Windows code paths
+(named-pipe IPC backend, ACL stubs, default `%APPDATA%` resolution) have been
+stripped in v1.9 and replaced with `compile_error!` markers so a Windows build
+fails fast rather than ships half-implemented. CI continues to target
+Linux + macOS only until this phase is executed.
+
+Rationale: Windows requires its own threat-model pass (DACLs, AppContainer,
+Job Objects, named-pipe security descriptors, DPAPI for keystore, Mark of the
+Web propagation, SmartScreen bypass risk on update) that cannot be safely
+bolted on alongside the cross-platform foundation. Treating it as a discrete
+phase forces the same security review depth Linux/macOS already received.
+
+Phase entry criteria: Phase 11.5 complete, ship-blockers in Phase 11 closed,
+test infrastructure capable of Windows CI (Azure / GitHub Windows runners).
+
+| # | Module |
+|---|---|
+| 93 | **Windows IPC** — Named-pipe backend with two-pipe duplex (one per direction) so reads and writes never serialize through a shared lock. Per-pipe security descriptor restricts the ACL to the current user SID. Same 4-byte BE length-prefix framing as Unix; identical public API on `IpcListener` / `IpcConnection` / `IpcReadHalf` / `IpcWriteHalf`. |
+| 94 | **Windows file ACLs** — `pb-config` + `pb-storage` config/db/data-dir DACL enforcement: explicit ACL granting only the current user SID, inheritance disabled. Applied at first write and re-verified on every load (mirrors the Unix 0700/0600 pass). DPAPI-protected secret blobs for any pre-keystore credential cache. |
+| 95 | **Windows kernel sandbox** — `pb-sandbox::SandboxProfile::apply` Windows path: AppContainer per renderer, restricted SID tokens, Job Object with `JOB_OBJECT_LIMIT_BREAKAWAY_OK = false`, mitigation policies (`PROCESS_MITIGATION_*`: ACG, CIG, BlockNonSystem fonts, image-load restrictions). Mark-of-the-Web honored on download writes. |
+| 96 | **Windows update + signing** — Signed MSI / MSIX build path with timestamped Authenticode signature plus the dual-signing posture from L39 (offline GPG + Sigstore Rekor). SmartScreen reputation bootstrap plan documented. Update channel uses the same blocklist-fetcher contract as desktop (Module 65) — no Windows-specific update protocol. |
+
+### Phase 12 — Mobile (iOS / Android) (Modules 97+, scope reserved)
 
 Mobile is **in scope, design-disciplined throughout Phases 1–11.5**: no path
 strings on trait surfaces, no Iced types in core crates, no Tokio assumptions
@@ -554,7 +602,7 @@ Module list locks when the phase begins. Reserved areas:
 | Android UI shell | Jetpack Compose; chrome design from §8 ported to Material. |
 | Capability adapters | `UIDocumentPicker` (iOS), Storage Access Framework (Android) — both already capability-shaped, fit `FileHandle` model directly. |
 | Sandbox | Delegates to OS app sandbox (iOS/Android handle this themselves). Module 12 (`pb-sandbox` kernel sandbox) is desktop-only; `apply()` is a no-op on iOS/Android. |
-| Sync transport | iCloud container on iOS, SAF-routed Drive on Android — adapters reuse Phase 11.5 vault. |
+| Sync transport | Same `pb-sync` crate as desktop. Mobile uses LAN discovery + QUIC + Ed25519 mTLS identically. SAF (Android) and `UIDocumentPicker` (iOS) only matter for the local-backup file (Module 85), not for cluster sync. |
 
 ---
 
@@ -567,11 +615,13 @@ Module list locks when the phase begins. Reserved areas:
 | `hyper-rustls` trust store: webpki-roots vs system | Deferred | Decision lands in Module 23. |
 | `tokio` per-crate feature trimming | Deferred | Trim when each crate has real code. |
 | Pin GitHub Actions to commit SHAs | Deferred | Acceptable risk to leave on tag refs. |
-| Terminal (Idea 1) | Moved to Future Improvements (§11) | Wizard now occupies Module 64. |
+| Terminal in place of JS console (Idea 1) | **Rejected (locked)** | DevTools console stays standard. Replacing it with a shell creates an arbitrary-code-execution surface inside the browser process, breaks DevTools muscle memory for every web developer, and adds maintenance burden with no privacy benefit. Wizard occupies Module 64. |
 | Visual editor (Idea 2) | Reframed | Site Customizer (Module 61) is the privacy-aligned version; full visual editor not pursued. |
 | Tab discard under memory pressure | Deferred | UX, not security. |
-| Sync crate split (`pb-sync` vs `pb-vault` + `pb-cloud`) | Decided at Phase 11.5 start | Affects dependency rule L12 — may require pb-vault to be added to the "freely importable" allowlist. |
-| Plugin / extension model beyond passthrough | Deferred | Phase 7 only enforces blocking; richer extensions deferred indefinitely. |
+| Passkey sync across devices | Deferred (post-v1) | Native passkeys are hardware-bound (Secure Enclave / StrongBox / TPM). Syncing them requires shipping our own software FIDO2 authenticator inside the vault. Out of scope for v1; revisit when password manager UI lands. |
+| Plugin / extension model beyond passthrough | **Closed (locked v1.10)** | Curated allowlist only; no generic plugin SDK in v1. Future "Plugin / extension SDK" entry remains in Future Improvements §11. |
+| Extension distribution surface (link to addons.mozilla.org / bundled store / manual `.xpi` only) | **Closed (locked v1.10): curated signed allowlist via Module 65 update channel.** No AMO link in chrome, no bundled in-app store, no manual `.xpi` side-load. Allowlist updates ship through the same signed-manifest pipeline as the blocklist track (Module 67). | Removes the AMO ToS / Mozilla-branding / trademark exposure entirely; trades extensibility for a much smaller security review surface. |
+| Extensions inspecting or modifying outbound traffic (webRequest-style hook) | **Closed (locked v1.10): no.** Allowlisted extensions do not receive outbound-traffic inspection. pb-network has no extension hook surface. | Honors L30 / L33; keeps the partition-key gatekeeper as the sole authority over network state. If a genuinely needed allowlisted extension ever requires this, reopen via architecture revision. |
 
 ---
 
@@ -618,6 +668,10 @@ browser category. They must ship with v1 to differentiate.
 | 2026-04-28 | v1.3 — DoH default + counters / logging / UI / history locks | L25 default flipped from NextDNS to **Quad9** (NextDNS without an account config ID adds no privacy value as a silent default; wizard now enforces config-ID entry and persists as `Custom { url }`, falling back to Quad9 if declined). L26 added: tracker/ad block counters surfaced in address-bar badge + Network Viewer (always local, never persisted). L27 added: ephemeral RAM-only debug logs by default, opt-in disk logs are redaction-gated, no network egress without per-session user consent. L28 added: modern translucent UI design intent — sidebar-hover default with bookmark icon column, top/vertical layouts opt-in; accessibility floor locked alongside (reduce-transparency honored, WCAG AA, full keyboard nav). L29 added: standard-mode history retention selector (`forever \| session \| week \| month`, default `forever`); strict still never writes history. Schema reflects L25 default; UI/history config keys land with their respective modules to avoid orphaned fields. |
 | 2026-04-28 | v1.4 — Cross-platform principle locked; schema gaps closed; UI module stubs added | **Cross-platform rule locked:** every crate in the workspace must compile on Linux, macOS, and Windows at all times. Platform-specific code is gated by `#[cfg(unix)]` / `#[cfg(windows)]` within a single module; the public API surface is identical on all platforms. **IPC transport (L4):** Unix backend uses AF_UNIX domain sockets (`tokio::net::UnixStream`). Windows backend uses named pipes (`tokio::net::windows::named_pipe`) with the same 4-byte BE length-prefix framing. `split()` on Windows serializes through a `Mutex` (single handle, not two-pipe duplex); upgrade to two-pipe if benchmarks show contention. A `compile_error!` guards all other platforms. **Schema gaps closed:** `HistoryConfig { retention }` (L29), `LoggingConfig { disk_logging_enabled }` (L27), and `UiConfig { tab_layout, reduce_transparency }` (L28) added to `pb-config` schema with correct locked defaults. **UI module stubs added:** Modules 58–62, 64 (file picker UI, permission center, network viewer, site customizer, PDF viewer, first-launch wizard) stubbed in `pb-ui` with full invariant comments. |
 | 2026-04-28 | v1.5 — Sandbox split into its own crate | Module 12 (OS sandbox profile) moved out of `pb-identity` and into a new top-level `pb-sandbox` crate. Workspace expanded from 12 to 13 crates. L12 amended: any crate may import `pb-ipc`, `pb-config`, **and `pb-sandbox`**; previously only the first two. Rationale: (1) `SandboxClass::Network` / `SandboxClass::Storage` are not identity concepts — putting them in `pb-identity` was a category error that scaled poorly; (2) `pb-storage` and `pb-network` need a sandbox profile but should not depend on `pb-identity` to get one; (3) Module 12.1 (real syscall enforcement) needs `unsafe`, and consolidating types + enforcement in one dedicated crate is more auditable than splitting policy across `pb-identity` + impl across `pb-platform`. Behavioral surface unchanged (same types, same `apply()` no-op contract). §4 topology, §5.8, and §6 Phase 2 module table updated to match. |
+| 2026-04-30 | v1.8 — Terminal-in-place-of-console rejected (locked) | Idea 1 (replace JS console with a real shell) moved from "deferred indefinitely" to **rejected**. Reasons: arbitrary-code-execution surface inside the browser process, breaks DevTools muscle memory, maintenance burden with no privacy payoff. Removed from §11; §7 row updated to "Rejected (locked)". |
+| 2026-04-30 | v1.10 — Extension allowlist locked + plan.md adaptation/perf/UI-design upgrades | **Extensions: curated allowlist only.** §3.2 rewritten: free side-load from AMO is forbidden, no AMO link in chrome, no bundled store, no manual `.xpi`. Allowlist ships through Module 65 update channel (same signed-manifest pipeline as Module 67 blocklist track). Allowlisted extensions do **not** receive `webRequest`-style outbound-traffic inspection; pb-network has no extension hook surface (honors L30/L33). All three "extension" rows in §7 Open Decisions closed: distribution-surface (allowlist), webRequest-hook (no), plugin-model (allowlist only). Extension SDK remains a Future Improvements §11 entry. **plan.md v1.10 companion changes:** Adaptation protocol + cohort-watch list (rustls/quinn/webpki-roots/argon2/chacha20poly1305/prost/Gecko); Module 0.5 test-harness foundation as new Phase 1.5 (replaces Module 19 as `(next)`); Module 23 split 23.1-23.4 (chain, CT, ECH, HSTS); Module 24 split 24.1-24.2 (ClientHello pin + cohort-drift CI); Module 83 split 83.1-83.5 (KDF/AEAD, ladder, format, lock, OS hooks); Module 87 split 87.1-87.3 (PAKE, UI, keystore); Phase 7.5 + Module 41.5 UI design lock as ship-blocker before any Phase 8 implementation; Module 80.6 local self-check page (no-telemetry privacy diagnostic); Performance contract cross-cutting concern with per-module budgets and Strict-mode invariant. New `docs/threat-model.md` codifies attacker profiles A1-A6 (in scope), N1-N7 (out of scope), and the seven defense-in-depth layers. |
+| 2026-04-30 | v1.9 — Windows isolated to its own phase + cloud purge + mDNS pair-once locked | **Windows pulled out of cross-platform foundation:** all pre-existing Windows code paths (pb-ipc named-pipe backend, pb-config/pb-storage ACL no-ops, `%APPDATA%` data-dir arm) replaced with `#[cfg(windows)] compile_error!` markers pointing at the new **Phase 11.9 — Windows hardening** (Modules 93-96: Windows IPC two-pipe duplex, file ACLs / DPAPI, AppContainer + Job Object sandbox, MSI/MSIX signed update). CI Linux/macOS only until Phase 11.9 ships. **Cloud sync purged from architecture entirely:** no Google Drive / iCloud / Dropbox / OneDrive references survive in L21 or anywhere; `SyncBackend` enum reduced to `{ Disabled, LanCluster, HubPeer, WebDav }`; cloud SaaS is now an architectural anti-goal, not a deferred option. **L21 mDNS pair-once persistent identity locked:** TXT record carries `(rotating_nonce, HMAC(cluster_key, nonce \|\| device_id_short))` so paired peers identify each other across networks/restarts without re-pairing while LAN outsiders see only random bytes. **Convergence guarantee** (signed append-only sync log + per-peer high-water marks, Module 84) explicitly written into L21. **Vault auto-lock** on suspend/lid-close/inactivity added to L21. **Forensic-redaction Mi2:** `pb-storage::StoreError::Sqlite` and `StorageError::Sqlite` Display made opaque (rusqlite text reachable only via `Error::source()` for internal tracing) per L27. **Cross-platform notification icon** (`pb-platform::IconRef`) replaces `Option<PathBuf>` to support iOS bundle ids / Android drawables. **Schema migration scaffold** stubbed in pb-storage (`migrate(conn, from, to)` with explicit `unimplemented!()` arms invoked from `bootstrap` on version mismatch). Module count 92 → 96. Architecture phase count 12 → 13 (added 11.9). |
+| 2026-04-30 | v1.7 — Sync model redesigned (LAN-cluster, no SaaS clouds) | Phase 11.5 expanded from 5 modules (83-87) to 10 modules (83-92). Dropped Google Drive / iCloud / Dropbox / OneDrive backends entirely. New transport stack: SPAKE2 6-digit pairing + 4-emoji fingerprint compare + Ed25519 identity keys (in OS keystore) + mDNS discovery + QUIC mTLS + per-recipient X25519 envelopes for direct messages. Hub-peer forwarding mode replaces SaaS sync as the primary cross-device path. Self-hosted WebDAV becomes opt-in last-resort relay. Sync is foreground-only; mobile background sync explicitly out of scope. Crate split locked to single `pb-sync`. L21 rewritten. §7 "Sync crate split" decision row replaced with "Passkey sync deferred" row. Phase 12 mobile sync row updated to reuse the same stack (SAF / UIDocumentPicker only matter for the local-backup file in Module 85). |
 | 2026-04-28 | v1.6 — Privacy-standard locks + mode-toggle UX + ship-gate scheduling | **Mode-toggle UX (§3.6)** locked: new tabs open Standard with a one-time prominent "Convert to Privacy tab" affordance; Strict is one-way (kill-tab-to-exit); Standard link-clicks open Standard with an offer-to-Strict popover; Strict tabs run under a separate `identity_profile_id` plus fresh `context_id` so cookies / session / cache from a Standard tab on the same URL never apply. **Partition-key context (§3.5)** clarified: `context_id` is fresh per Strict tab, stable per Standard profile. **Locks L30–L37** added: HTTPS-Only default, Referer policy (`strict-origin-when-cross-origin` / `no-referrer`), URL parameter stripping (UTM/gclid/fbclid + Module 21 list), network-state partitioning (cache / DNS / conn-pool / ALT-SVC / HSTS keyed by partition_key), Encrypted Client Hello (preferred when available, mandatory in Strict where supported), WebRTC constraints (per-site permission, mDNS-only ICE, fully off in Strict), bounce-tracker mitigation (45-day intermediate-only purge), cookie-banner auto-decline (wizard-gated, blocklist-track shipped). **Locks L38–L39** added: reproducible builds (locked toolchain + cargo-vet + sha256 publish + rebuild gate) and dual release signing (offline GPG key + Sigstore Rekor transparency log). **§5.11** added: Standard-mode site-isolation tradeoff documented — co-residence acknowledged, COOP/COEP isolation honored, Spectre mitigations on, opt-in per-site Standard renderers reserved for Phase 8. **§6 Phase 11** scheduled **Module 80.5** as the real OS sandbox enforcement work in `pb-sandbox/src/enforce.rs` and called it a v1.0 ship-blocker (Module 12 v1 is types-only). |
 
 ---
@@ -632,8 +686,7 @@ must remain compatible with these — i.e. don't paint into a corner.
 | **Custom protocol stack** built on audited primitives | Our own vault format spec, device-pairing handshake, recovery scheme. Primitives stay standardized (L22). |
 | **Post-quantum primitive migration** (ML-KEM-768 / ML-DSA-65) | Track NIST PQC standardization. Vault format is versioned (Module 83) so migration is a format bump, not a rewrite. |
 | **Hardware-backed key storage** | Secure Enclave (macOS/iOS), TPM (Linux/Windows), Android Keystore, YubiKey. Vault master-key derivation grows a hardware-attested branch. |
-| **Push-based sync** | If/when funding allows: CRDT log + thin WebSocket relay (still E2E encrypted). Polling is the v1 mode. |
-| **Linux terminal in place of JS console** | Original "Idea 1" — replace dev console with a real shell where the page is callable from the terminal. Long-term, deferred indefinitely. |
+| **Push-based sync over WAN** | A user-runnable WireGuard-style relay (still E2E encrypted) for cross-network sync without WebDAV. v1 ships LAN + hub-peer + optional WebDAV; this would be a smoother T3 alternative if/when there's appetite to ship it. |
 | **Visual theme / CSS authoring tool** | Built atop Site Customizer (Module 61). Lets users author and share visual customizations. |
 | **Plugin / extension SDK** | Beyond Phase 7 blocking, a privacy-respecting extension model with capability-scoped APIs. |
 | **Identity-scoped device sync** | Each `IdentityProfile` syncs to its own vault — work and personal data never share a backup file. |

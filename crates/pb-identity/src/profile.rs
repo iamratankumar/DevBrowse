@@ -12,9 +12,8 @@
 //!   * Module 8  (scheduler): `mode` + `profile_id` drive the renderer
 //!     *sharing rule (§3.4).
 //!   * Module 9  (lifecycle): IdentityProfile is the spawn token.
-//!   * `pb-sandbox` (Module 12): `mode` selects the kernel sandbox profile.
+//!   * Module 12 (sandbox):   `mode` selects the kernel sandbox profile.
 //!
-//! TODO(Module 7): registry stores these in a HashMap keyed by `profile_id`.
 //! TODO(Module 27 / 82): redactor must use `redacted_label()` in any log or
 //!   crash-report write per L27 + §5.10. Default Debug shows the user-visible
 //!   name and is acceptable inside the trusted broker; it must NOT survive a
@@ -38,6 +37,13 @@ pub const MAX_NAME_LEN: usize = 64;
 /// Mirrors `pb_config::Mode`; conversion adapters live below. pb-identity
 /// owns the runtime semantics of Mode (renderer-sharing rule §3.4, sandbox
 /// profile selection in Module 12). pb-config owns the on-disk representation.
+///
+/// `Copy` is intentional: Mode is a single byte and is moved across IPC and
+/// process boundaries (orchestrator -> renderer harness -> storage broker)
+/// many times per tab spawn. Cloning would be free; copying is the same
+/// instruction with stricter borrow-check semantics. Treat it as a value
+/// type, never a handle. Pairs with the architecture §3.1 invariant that
+/// a profile's Mode is locked at creation: there is no setter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {

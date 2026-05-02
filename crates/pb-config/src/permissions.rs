@@ -5,15 +5,19 @@
 //! example, our DoH endpoint to a tracking resolver, or flip
 //! `telemetry.enabled` true. Failing closed at load time is the right call.
 //!
-//! Windows ACL-equivalent enforcement is deferred. The Phase 1 platform
-//! target is Linux; Windows hardening lands when the Windows backend is
-//! added (Module 12 / Phase 2 area).
+//! Windows ACL-equivalent enforcement is **deferred to Phase 11.9 — Module
+//! 94 (Windows file ACLs)**. The previous v1.4 `#[cfg(not(unix))]` no-op
+//! stubs were removed in v1.9 because a silent no-op was strictly worse
+//! than a clean compile failure: callers on Windows now refer to undefined
+//! functions, surfacing the missing platform support immediately. Phase
+//! 11.9 will land an explicit DACL pass restricting the ACL to the current
+//! user SID with inheritance disabled (mirrors the Unix 0600 contract).
 
 use std::io;
 use std::path::Path;
 
 /// Reject if the file at `path` has any permission bits for group or world.
-/// On non-Unix platforms this is a no-op (Windows ACL check is deferred).
+/// Unix only; on Windows this function does not exist (Phase 11.9 defers).
 #[cfg(unix)]
 pub fn ensure_owner_only(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -31,21 +35,12 @@ pub fn ensure_owner_only(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-pub fn ensure_owner_only(_path: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-/// Set the file's mode to 0600 on Unix. No-op elsewhere.
+/// Set the file's mode to 0600 on Unix. Unix only; on Windows this function
+/// does not exist (Phase 11.9 defers).
 #[cfg(unix)]
 pub fn lock_owner_only(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-pub fn lock_owner_only(_path: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(all(test, unix))]

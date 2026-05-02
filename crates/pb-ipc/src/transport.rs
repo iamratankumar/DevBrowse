@@ -2,11 +2,17 @@
 //
 // Framing: 4-byte big-endian u32 length prefix followed by payload bytes.
 //
-// Platform backends (same public API on every target):
+// Platform backends (same public API on every supported target):
 //   Unix    — tokio::net::UnixStream / UnixListener (AF_UNIX domain sockets)
-//   Windows — tokio::net::windows::named_pipe (NamedPipeServer / ClientOptions)
-//             Reads and writes share a Mutex; fully concurrent split() is a
-//             TODO tracked in docs/architecture.md — see Windows transport note.
+//
+// Windows backend is deferred to Phase 11.9 (Module 93). The previous v1.4
+// named-pipe implementation — which serialized reads and writes through a
+// shared Mutex on a single pipe handle — was removed in v1.9 along with
+// every other Windows code path. The Phase 11.9 replacement is a two-pipe
+// duplex (one pipe per direction) so concurrent reads and writes never
+// contend on the same handle, plus an explicit per-pipe security
+// descriptor restricting the ACL to the current user SID. See
+// docs/architecture.md §6 Phase 11.9 Module 93 for the full requirements.
 //
 // Adding a new platform: implement IpcListener, IpcConnection, IpcReadHalf,
 // IpcWriteHalf in a new cfg-gated module and re-export below.
@@ -216,148 +222,25 @@ mod unix_impl {
     }
 }
 
-// ── Windows backend (named pipes) ─────────────────────────────────────────────
+// ── Windows backend ───────────────────────────────────────────────────────────
 //
-// Named pipes give the same length-prefix framing over a handle pair.
-// `to_pipe_name` maps a unix-style socket path to \\.\pipe\<filename> so
-// callers use the same Path API on both platforms.
-//
-// Concurrency note: `IpcReadHalf` and `IpcWriteHalf` share the same
-// `Arc<Mutex<WinStream>>`. A concurrent recv + send will serialize through
-// the lock (Windows named pipes require OVERLAPPED I/O for true concurrency
-// without handle duplication). For the IPC message volumes DevBrowse expects
-// this is fine; upgrade to a two-pipe duplex model (one pipe per direction)
-// if benchmarks show contention.
+// Deferred to Phase 11.9 — Module 93 (two-pipe duplex named-pipe transport
+// with per-pipe SID-restricted security descriptors). The placeholder
+// `compile_error!` below makes accidental Windows builds fail loudly until
+// that module lands. Do not reintroduce the v1.4 single-pipe Mutex backend.
 
 #[cfg(windows)]
-pub use windows_impl::{IpcConnection, IpcListener, IpcReadHalf, IpcWriteHalf};
-
-#[cfg(windows)]
-mod windows_impl {
-    use super::{read_frame, write_frame, IpcError};
-    use std::path::Path;
-    use std::sync::Arc;
-    use tokio::net::windows::named_pipe::{
-        ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
-    };
-    use tokio::sync::Mutex;
-
-    fn to_pipe_name(path: &Path) -> String {
-        let name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-        format!(r"\\.\pipe\devbrowse-{name}")
-    }
-
-    enum WinStream {
-        Server(NamedPipeServer),
-        Client(NamedPipeClient),
-    }
-
-    pub struct IpcListener {
-        pipe_name: String,
-        // The pending server instance: accept() waits for a client on the
-        // current instance and immediately creates the next one so no
-        // connection window is missed.
-        pending: Mutex<NamedPipeServer>,
-    }
-
-    impl IpcListener {
-        pub fn bind(path: &Path) -> Result<Self, IpcError> {
-            let pipe_name = to_pipe_name(path);
-            let server = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&pipe_name)?;
-            Ok(Self {
-                pipe_name,
-                pending: Mutex::new(server),
-            })
-        }
-
-        pub async fn accept(&self) -> Result<IpcConnection, IpcError> {
-            let mut guard = self.pending.lock().await;
-            guard.connect().await?;
-            let next = ServerOptions::new().create(&self.pipe_name)?;
-            let accepted = std::mem::replace(&mut *guard, next);
-            Ok(IpcConnection {
-                inner: Arc::new(Mutex::new(WinStream::Server(accepted))),
-            })
-        }
-    }
-
-    pub struct IpcConnection {
-        inner: Arc<Mutex<WinStream>>,
-    }
-
-    impl IpcConnection {
-        pub async fn connect(path: &Path) -> Result<Self, IpcError> {
-            let pipe_name = to_pipe_name(path);
-            let client = ClientOptions::new().open(&pipe_name)?;
-            Ok(Self {
-                inner: Arc::new(Mutex::new(WinStream::Client(client))),
-            })
-        }
-
-        pub fn split(self) -> (IpcReadHalf, IpcWriteHalf) {
-            (
-                IpcReadHalf {
-                    inner: self.inner.clone(),
-                },
-                IpcWriteHalf { inner: self.inner },
-            )
-        }
-
-        pub async fn send(&mut self, payload: &[u8]) -> Result<(), IpcError> {
-            let mut guard = self.inner.lock().await;
-            match &mut *guard {
-                WinStream::Server(s) => write_frame(s, payload).await,
-                WinStream::Client(c) => write_frame(c, payload).await,
-            }
-        }
-
-        pub async fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
-            let mut guard = self.inner.lock().await;
-            match &mut *guard {
-                WinStream::Server(s) => read_frame(s).await,
-                WinStream::Client(c) => read_frame(c).await,
-            }
-        }
-    }
-
-    pub struct IpcReadHalf {
-        inner: Arc<Mutex<WinStream>>,
-    }
-
-    impl IpcReadHalf {
-        pub async fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
-            let mut guard = self.inner.lock().await;
-            match &mut *guard {
-                WinStream::Server(s) => read_frame(s).await,
-                WinStream::Client(c) => read_frame(c).await,
-            }
-        }
-    }
-
-    pub struct IpcWriteHalf {
-        inner: Arc<Mutex<WinStream>>,
-    }
-
-    impl IpcWriteHalf {
-        pub async fn send(&mut self, payload: &[u8]) -> Result<(), IpcError> {
-            let mut guard = self.inner.lock().await;
-            match &mut *guard {
-                WinStream::Server(s) => write_frame(s, payload).await,
-                WinStream::Client(c) => write_frame(c, payload).await,
-            }
-        }
-    }
-}
+compile_error!(
+    "Windows IPC backend deferred to Phase 11.9 (Module 93). \
+     See docs/architecture.md §6 Phase 11.9. \
+     CI builds Linux/macOS only until this phase ships."
+);
 
 // ── Unsupported platforms ─────────────────────────────────────────────────────
 
 #[cfg(not(any(unix, windows)))]
 compile_error!(
-    "pb-ipc transport requires a Unix (AF_UNIX sockets) or Windows (named pipes) target. \
-     Implement a platform backend in transport.rs before building."
+    "pb-ipc transport requires a Unix (AF_UNIX sockets) target. \
+     Windows support is deferred to Phase 11.9. \
+     Implement a platform backend in transport.rs before building any other target."
 );

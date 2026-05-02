@@ -823,10 +823,24 @@ version = "0.1.0"
 dependencies = [
  "pb-config",
  "pb-ipc",
+ "pb-sandbox",
  "rusqlite",
  "sha2",
  "thiserror",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pb-sync"
+version = "0.1.0"
+dependencies = [
+ "pb-config",
+ "pb-ipc",
+ "pb-sandbox",
+ "serde",
+ "thiserror",
  "tracing",
  "uuid",
 ]

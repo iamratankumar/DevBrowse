@@ -13,6 +13,7 @@ members = [
     "crates/pb-extensions",
     "crates/pb-update",
     "crates/pb-ui",
+    "crates/pb-sync",
     "crates/pb-browser",
 ]
 

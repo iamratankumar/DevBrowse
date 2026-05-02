@@ -3,6 +3,12 @@
 //! Splits desktop (DevBrowse owns the kernel sandbox) from mobile (the OS
 //! app sandbox already isolates the process — architecture §3 mobile table).
 //! The classification is platform-only, not target-arch.
+//!
+//! `PlatformKind::Windows` and its `current()` arm are kept as type-level
+//! reservations so Phase 11.9 (Module 95 — Windows kernel sandbox via
+//! AppContainer + Job Objects) can plug in without an enum reshape.
+//! Windows binaries cannot be produced in v1.9: the `pb-ipc` Windows
+//! backend `compile_error!`s, blocking the workspace build.
 
 use serde::{Deserialize, Serialize};
 

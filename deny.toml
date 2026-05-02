@@ -23,7 +23,6 @@ allow = [
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
-    "OpenSSL",
 ]
 confidence-threshold = 0.93
 
@@ -32,8 +31,17 @@ multiple-versions    = "warn"
 wildcards            = "deny"
 # Internal workspace path-deps (pb-ipc, pb-config) carry no version field;
 # this is fine because they're never published to crates.io. Wildcards are
-# still denied for *external* deps — exactly what we want.
+# still denied for *external* deps - exactly what we want.
 allow-wildcard-paths = true
+
+# Known transitive duplicates we accept. Each entry must justify itself.
+skip = [
+    # wit-bindgen ships two versions through getrandom's WASI shims:
+    # 0.51.0 via wasip3 (getrandom 0.4.x), 0.57.1 via wasip2 (getrandom 0.3.x).
+    # Both are gated to WASI targets; native DevBrowse builds never compile
+    # either. Upstream unification is getrandom's call, not ours.
+    { name = "wit-bindgen" },
+]
 
 [sources]
 unknown-registry = "deny"

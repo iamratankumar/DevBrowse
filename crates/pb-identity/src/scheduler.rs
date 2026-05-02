@@ -17,9 +17,6 @@
 //! Concurrency: plain sync struct. Module 9 wraps it under
 //! `Arc<tokio::sync::Mutex>` at the integration boundary.
 //!
-//! TODO(Module 9): lifecycle is responsible for calling `register_renderer`
-//!   immediately after a successful spawn, and `retire_renderer` immediately
-//!   before any termination is observable to other tabs.
 //! TODO(Module 12): sandbox profile selection happens at lifecycle's spawn
 //!   step, keyed off `IdentityProfile.mode()`. Scheduler does not touch
 //!   sandbox state, but its decision determines whether a fresh sandbox is

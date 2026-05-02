@@ -1,0 +1,27 @@
+[package]
+name    = "pb-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pb-ipc     = { workspace = true }
+pb-config  = { workspace = true }
+pb-sandbox = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+uuid       = { workspace = true }
+
+# Crates added when each module lands. Listed here so future contributors
+# know which crate fulfills each Phase 11.5 module without grep-spelunking.
+#
+# TODO Module 83 (vault crypto):    argon2, chacha20poly1305, hkdf, zeroize
+# TODO Module 86 (LAN discovery):   mdns-sd
+# TODO Module 87 (LAN pairing):     spake2 (PAKE), ed25519-dalek, x25519-dalek,
+#                                   keyring (OS keystore wrapper)
+# TODO Module 88 (LAN transport):   quinn (QUIC), rustls (TLS 1.3 inside QUIC)
+# TODO Module 90 (send tab):        chacha20poly1305 reused; serde_cbor or
+#                                   prost for envelope encoding
+# TODO Module 92 (WebDAV relay):    reqwest_dav or hyper + custom DAV verbs
