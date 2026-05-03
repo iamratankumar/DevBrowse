@@ -48,15 +48,17 @@ prost = "0.12"
 # storage
 rusqlite = { version = "0.31", features = ["bundled"] }
 
-# networking (hyper 1.x + rustls — no OpenSSL)
-# NOTE: hyper-rustls trust-store choice is deferred to Module 18 (pb-network).
-# Lock decision pending: hermetic webpki-roots vs OS native trust store.
-# Default features intentionally NOT disabled here; pb-network's Cargo.toml
-# will pin features when it's implemented.
-hyper        = { version = "1", features = ["client", "http1", "http2"] }
-hyper-util   = { version = "0.1", features = ["client", "client-legacy", "tokio"] }
-hyper-rustls = { version = "0.27", features = ["http2"] }
-http         = "1"
+# networking (hyper 1.x + rustls -- no OpenSSL)
+# Architecture v1.10 (Module 23.1): trust anchors = webpki-roots locked.
+# System-roots fallback is wizard-opt-in only, lands in Module 23.1.
+# Module 20 (DoH client) consumes hyper-rustls with webpki-roots feature
+# for the bootstrap trust anchor set.
+hyper          = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util     = { version = "0.1", features = ["client", "client-legacy", "tokio"] }
+hyper-rustls   = { version = "0.27", features = ["http2", "webpki-roots", "ring"], default-features = false }
+http           = "1"
+http-body-util = "0.1"
+bytes          = "1"
 
 # error handling
 thiserror = "1"
