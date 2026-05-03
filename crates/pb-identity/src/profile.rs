@@ -86,7 +86,7 @@ pub enum ProfileError {
 
 /// A privacy identity (architecture §3.1).
 ///
-/// Construct via [`IdentityProfile::builder`]. All fields are private; the
+/// Construct via [`xfile::builder`]. All fields are private; the
 /// only mutating path is the builder, which mints `profile_id` exactly once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityProfile {

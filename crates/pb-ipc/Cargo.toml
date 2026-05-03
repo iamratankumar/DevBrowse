@@ -17,6 +17,15 @@ serde     = { workspace = true }
 thiserror = { workspace = true }
 tracing   = { workspace = true }
 
+# `testkit` exposes a duplex-backed `DuplexConnection` so pb-testkit can
+# build in-memory IPC pairs without spawning sockets. The feature is OFF
+# by default; release builds never compile the duplex path. Gated rather
+# than `#[cfg(test)]` because pb-testkit lives in a different crate and
+# must be able to opt in from its own dev-dependencies graph.
+[features]
+default = []
+testkit = []
+
 [dev-dependencies]
 tempfile = "3"
 

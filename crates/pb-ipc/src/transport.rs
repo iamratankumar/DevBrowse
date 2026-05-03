@@ -72,6 +72,131 @@ async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>, 
     Ok(buf)
 }
 
+// ── Test-only duplex backend (cfg-gated) ─────────────────────────────────────
+//
+// Behind the `testkit` feature, pb-testkit exposes an in-memory IPC pair
+// backed by `tokio::io::duplex`. Tests built on the pair never touch the
+// filesystem, never bind a socket, and run in parallel without unique-path
+// dance. Production code paths never see this type — the feature is OFF by
+// default and pb-testkit owns the only consumer.
+//
+// SECURITY INVARIANT — never weaken:
+//   The duplex path reuses the same `read_frame` / `write_frame` helpers as
+//   the Unix backend so framing is exercised identically. A test that passes
+//   under DuplexConnection covers the production framing surface; do not
+//   introduce a parallel framing implementation here.
+
+#[cfg(feature = "testkit")]
+pub mod testkit {
+    //! In-memory IPC fixture surface. Gated on `feature = "testkit"`.
+    //!
+    //! Use [`DuplexConnection::pair`] to obtain `(a, b)` where bytes written
+    //! to one end are readable from the other, with the same length-prefixed
+    //! framing the production transport uses.
+
+    use super::{read_frame, write_frame, IpcError, MAX_MESSAGE_BYTES};
+    use tokio::io::DuplexStream;
+
+    /// Default per-end buffer for the duplex stream. Sized so a single
+    /// `MAX_MESSAGE_BYTES` payload plus its length prefix fits without
+    /// blocking; tests that need streaming back-pressure call
+    /// [`DuplexConnection::pair_with_capacity`] explicitly.
+    pub const DEFAULT_DUPLEX_CAPACITY: usize = MAX_MESSAGE_BYTES + 4;
+
+    /// Duplex-backed end of a pb-ipc connection. API mirrors the
+    /// production [`super::IpcConnection`] (`send`, `recv`, `split`).
+    pub struct DuplexConnection {
+        inner: DuplexStream,
+    }
+
+    impl DuplexConnection {
+        /// Create a connected pair with the default per-end capacity.
+        pub fn pair() -> (Self, Self) {
+            Self::pair_with_capacity(DEFAULT_DUPLEX_CAPACITY)
+        }
+
+        /// Create a connected pair with an explicit per-end capacity.
+        ///
+        /// `capacity` smaller than a target frame's `len + 4` causes
+        /// `send` to apply back-pressure; useful for partial-write tests.
+        pub fn pair_with_capacity(capacity: usize) -> (Self, Self) {
+            let (a, b) = tokio::io::duplex(capacity);
+            (Self { inner: a }, Self { inner: b })
+        }
+
+        pub async fn send(&mut self, payload: &[u8]) -> Result<(), IpcError> {
+            write_frame(&mut self.inner, payload).await
+        }
+
+        pub async fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
+            read_frame(&mut self.inner).await
+        }
+
+        /// Split into owned read/write halves backed by the same duplex.
+        pub fn split(self) -> (DuplexReadHalf, DuplexWriteHalf) {
+            let (r, w) = tokio::io::split(self.inner);
+            (DuplexReadHalf { inner: r }, DuplexWriteHalf { inner: w })
+        }
+    }
+
+    pub struct DuplexReadHalf {
+        inner: tokio::io::ReadHalf<DuplexStream>,
+    }
+
+    impl DuplexReadHalf {
+        pub async fn recv(&mut self) -> Result<Vec<u8>, IpcError> {
+            read_frame(&mut self.inner).await
+        }
+    }
+
+    pub struct DuplexWriteHalf {
+        inner: tokio::io::WriteHalf<DuplexStream>,
+    }
+
+    impl DuplexWriteHalf {
+        pub async fn send(&mut self, payload: &[u8]) -> Result<(), IpcError> {
+            write_frame(&mut self.inner, payload).await
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn round_trip_small_message() {
+            let (mut a, mut b) = DuplexConnection::pair();
+            a.send(b"ping").await.unwrap();
+            assert_eq!(b.recv().await.unwrap(), b"ping");
+        }
+
+        #[tokio::test]
+        async fn split_halves_round_trip() {
+            let (a, b) = DuplexConnection::pair();
+            let (mut ar, _aw) = a.split();
+            let (_br, mut bw) = b.split();
+            bw.send(b"split").await.unwrap();
+            assert_eq!(ar.recv().await.unwrap(), b"split");
+        }
+
+        #[tokio::test]
+        async fn rejects_oversized_send() {
+            let (mut a, _b) = DuplexConnection::pair();
+            let big = vec![0u8; MAX_MESSAGE_BYTES + 1];
+            let err = a.send(&big).await.unwrap_err();
+            assert!(matches!(err, IpcError::MessageTooLarge(_)));
+        }
+
+        #[tokio::test]
+        async fn closed_peer_surfaces_connection_closed() {
+            let (a, mut b) = DuplexConnection::pair();
+            drop(a);
+            let err = b.recv().await.unwrap_err();
+            assert!(matches!(err, IpcError::ConnectionClosed));
+        }
+    }
+}
+
 // ── Unix backend (AF_UNIX domain sockets) ────────────────────────────────────
 
 #[cfg(unix)]

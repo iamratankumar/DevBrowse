@@ -15,6 +15,7 @@ members = [
     "crates/pb-ui",
     "crates/pb-sync",
     "crates/pb-browser",
+    "crates/pb-testkit",
 ]
 
 [workspace.package]

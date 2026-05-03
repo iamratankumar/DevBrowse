@@ -12,3 +12,8 @@ pub mod transport;
 pub use transport::{
     IpcConnection, IpcError, IpcListener, IpcReadHalf, IpcWriteHalf, MAX_MESSAGE_BYTES,
 };
+
+/// Test-only fixture surface. Compiled only with `--features testkit`;
+/// pb-testkit (Phase 1.5 / Module 0.5) is the sole intended consumer.
+#[cfg(feature = "testkit")]
+pub use transport::testkit;

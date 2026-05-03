@@ -1,0 +1,47 @@
+[package]
+name    = "pb-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Module 0.5 — shared test-fixture crate.
+#
+# Dev-only: every consuming crate adds this under [dev-dependencies], not
+# [dependencies]. The fixture surface is gated behind
+# `#[cfg(any(test, feature = "testkit"))]` (the feature is enabled
+# automatically when consumed as a dev-dep so tests compile with no extra
+# flag). Production builds therefore never see the fixture types.
+#
+# Dependency rule (architecture L12): this crate may import any pb-* crate
+# because it is dev-only and never linked into a release binary. It is
+# explicitly NOT a leaf crate, by design.
+
+[features]
+# `testkit` is the on-switch for the public fixture surface. Enabled by
+# default so a `cargo test -p pb-testkit` works without flags. Downstream
+# crates that want to compile fixtures into their own test binaries also
+# get the feature for free via the default.
+default = ["testkit"]
+testkit = ["pb-ipc/testkit"]
+
+[dependencies]
+# pb-* crates whose surface this fixture wraps. Order tracks crate topology.
+pb-config    = { workspace = true }
+pb-ipc       = { workspace = true, features = ["testkit"] }
+pb-platform  = { path = "../pb-platform" }
+pb-identity  = { path = "../pb-identity" }
+pb-storage   = { path = "../pb-storage" }
+pb-sandbox   = { workspace = true }
+
+# async + utility deps shared with the production crates we mock.
+tokio        = { workspace = true }
+uuid         = { workspace = true }
+thiserror    = { workspace = true }
+
+# Property-based testing scaffolding (subtask 4 of Module 0.5).
+proptest     = "1"
+
+[dev-dependencies]
+# Self-tests for the fixtures themselves.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
