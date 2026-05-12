@@ -133,6 +133,27 @@ pub enum NetworkError {
     /// v1 never produces this.
     #[error("tls handshake failed")]
     Tls,
+
+    /// Module 23.2: Certificate Transparency policy rejected the
+    /// chain. Only produced when [`crate::tls::CtPolicy::HardFail`] +
+    /// a [`crate::tls::CtVerificationOutcome::Failed`] outcome
+    /// combine into [`crate::tls::CtDecision::Block`]. Display is
+    /// opaque; the [`crate::tls::CtFailureKind`] discriminant is
+    /// reachable through the source chain only.
+    #[error("tls handshake rejected: certificate transparency policy")]
+    TlsCtFailed,
+
+    /// Module 23.3: Encrypted Client Hello policy rejected the
+    /// handshake. Only produced when
+    /// [`crate::tls::EchPolicy::Mandatory`] (Strict) + a
+    /// [`crate::tls::EchVerificationOutcome::Failed`] outcome
+    /// combine into [`crate::tls::EchDecision::Block`] (i.e. the
+    /// server *did* offer an ECH config but the attempt failed
+    /// for any reason other than `ech_required` retry). Display
+    /// is opaque; the [`crate::tls::EchFailureKind`] discriminant
+    /// is reachable through the source chain only.
+    #[error("tls handshake rejected: encrypted client hello policy")]
+    TlsEchFailed,
 }
 
 impl From<IpcError> for NetworkError {
@@ -165,6 +186,8 @@ impl Clone for NetworkError {
             Self::ResolveOutage => Self::ResolveOutage,
             Self::ResolveRebinding => Self::ResolveRebinding,
             Self::Tls => Self::Tls,
+            Self::TlsCtFailed => Self::TlsCtFailed,
+            Self::TlsEchFailed => Self::TlsEchFailed,
             // Source-bearing variants collapse to `Resolve`. This is
             // the documented Clone behaviour (see crate-level doc on
             // NetworkError); call sites that need source chains must
@@ -248,6 +271,14 @@ mod tests {
             "dns resolution failed"
         );
         assert_eq!(format!("{}", NetworkError::Tls), "tls handshake failed");
+        assert_eq!(
+            format!("{}", NetworkError::TlsCtFailed),
+            "tls handshake rejected: certificate transparency policy"
+        );
+        assert_eq!(
+            format!("{}", NetworkError::TlsEchFailed),
+            "tls handshake rejected: encrypted client hello policy"
+        );
         assert_eq!(
             format!("{}", NetworkError::Blocked),
             "network request blocked"

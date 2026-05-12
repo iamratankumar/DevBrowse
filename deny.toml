@@ -23,6 +23,12 @@ allow = [
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
+    # webpki-roots redistributes Mozilla's CCADB trust-anchor dataset.
+    # CDLA-Permissive-2.0 (Community Data License Agreement) is the SPDX
+    # license used for community data redistribution; it is OSI-aligned
+    # permissive and is the same license Chrome / Firefox use for the
+    # same anchor set. Locked in Module 23.1 (architecture v1.10).
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

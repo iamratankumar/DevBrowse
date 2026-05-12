@@ -59,6 +59,15 @@ hyper-rustls   = { version = "0.27", features = ["http2", "webpki-roots", "ring"
 http           = "1"
 http-body-util = "0.1"
 bytes          = "1"
+# Module 23.1 owns the rustls ClientConfig factory. Pinned to 0.23 (the
+# version hyper-rustls 0.27 selects) so direct + transitive paths converge.
+# Cohort-watch (README §Adaptation): a 0.23.x bump triggers the protocol;
+# a 0.24 bump is a hold. The `tls12` feature is enabled because Module
+# 24.1's ClientHello pin advertises both TLS 1.3 and TLS 1.2 suites
+# (matching the dominant browser cohort); a feature-set change here is
+# itself cohort-relevant and therefore on the cohort-watch list.
+rustls         = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+webpki-roots   = "0.26"
 
 # error handling
 thiserror = "1"
@@ -71,6 +80,13 @@ sha2 = "0.10"
 # logging / tracing
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# benches (dev-dependency only — never linked into release binaries).
+# README §"Cross-cutting concerns" item 13 mandates a Criterion bench
+# under `benches/<module>.rs` for every privacy-critical hot path.
+# Module 21 blocklist match is the first; Module 14 partition-key
+# derive + Module 19 LRU follow as benches land.
+criterion          = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 # ── release profile hardening — Module 2.1 ────────────────────────────────
 # Browser parses hostile input; integer overflow must panic, not wrap.

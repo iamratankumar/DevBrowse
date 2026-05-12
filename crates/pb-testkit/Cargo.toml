@@ -39,6 +39,11 @@ tokio        = { workspace = true }
 uuid         = { workspace = true }
 thiserror    = { workspace = true }
 
+# Module 24.2 — the ja3_probe fixture takes Arc<rustls::ClientConfig>
+# and drives ClientConnection::new + write_tls synchronously to capture
+# the rendered ClientHello. Same 0.23 pin as the workspace; cohort-watched.
+rustls       = { workspace = true }
+
 # Property-based testing scaffolding (subtask 4 of Module 0.5).
 proptest     = "1"
 

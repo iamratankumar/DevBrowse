@@ -36,11 +36,10 @@
 //! GET-with-base64url-body is also supported by RFC 8484 but DevBrowse
 //! prefers POST so qnames never appear in URL paths or in caches.
 //
-// TODO(Module 23.1): wire SPKI pin verification through the TLS
-//   chain validator. Until then, `ResolverEndpoint.spki_pin` is
-//   reserved metadata.
-// TODO(Module 24.1): JA3-pinned ClientHello for the DoH connection.
-//   Currently uses rustls defaults; cohort-watch covers this.
+// TODO(Module 23.1 follow-up): wire SPKI pin verification through the
+//   TLS chain validator. Until then, `ResolverEndpoint.spki_pin` is
+//   reserved metadata. The chain validator is live (`with_validator`
+//   below) but does not yet consult the SPKI pin on handshake.
 
 use crate::dns::rebinding;
 use crate::dns::resolver::{
@@ -100,13 +99,26 @@ impl std::fmt::Debug for HyperDohTransport {
 }
 
 impl HyperDohTransport {
-    /// Build a fresh transport with default rustls trust anchors
-    /// (`webpki-roots` per L25 / Module 23.1 default). HTTP/2 only
-    /// for DoH (RFC 8484 strongly recommends it; HTTP/1.1 is allowed
-    /// but produces an inferior cohort).
+    /// Build a fresh transport with the locked trust anchors per
+    /// L25 / Module 23.1 (webpki-roots). Equivalent to
+    /// [`HyperDohTransport::with_validator`] called with the default
+    /// [`crate::ChainValidator`].
     pub fn new() -> Result<Self, NetworkError> {
+        Self::with_validator(&crate::ChainValidator::default())
+    }
+
+    /// Build a transport using the supplied [`ChainValidator`] for
+    /// trust anchors. The orchestrator (Module 80) constructs a
+    /// single shared validator at boot and hands it to every TLS
+    /// site (DoH client, production HTTPS dispatch path, future ECH
+    /// hook) so the cohort-watch posture cannot fork by call site.
+    ///
+    /// HTTP/2 only — RFC 8484 strongly recommends it; HTTP/1.1 is
+    /// allowed but produces an inferior cohort.
+    pub fn with_validator(validator: &crate::ChainValidator) -> Result<Self, NetworkError> {
+        let tls_config = validator.build_client_config();
         let connector = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
+            .with_tls_config((*tls_config).clone())
             .https_only()
             .enable_http2()
             .build();

@@ -1,0 +1,95 @@
+name: JA3 cohort drift
+
+# Module 24.2 — nightly + PR-on-cohort-touch JA3 cohort-drift detection.
+#
+# What this catches:
+#   * rustls / quinn / webpki-roots minor or patch bump that shifts the
+#     advertised ClientHello (cipher suite reorder, extension set
+#     change, kx group reorder).
+#   * Workspace Cargo.toml feature change (e.g. enabling `logging`,
+#     `prefer-post-quantum`, or any other rustls feature that alters
+#     the ClientHello compile path).
+#   * Module 24.1 pin reordered (LOCKED_CIPHER_SUITES,
+#     LOCKED_KX_GROUPS, LOCKED_PROTOCOL_VERSIONS).
+#
+# The integration test under `crates/pb-network/tests/cohort/ja3.rs`
+# pins the cohort-locked fields explicitly. A failure here is the first
+# defense per the README §Adaptation cohort-watch protocol; the bump
+# is held until the protocol's triage step decides no-op / cohort-shift /
+# cohort-split.
+
+on:
+  # Nightly: 04:00 UTC. Catches upstream version drift even when no
+  # PR opens against this repo.
+  schedule:
+    - cron: '0 4 * * *'
+
+  # On PRs that touch cohort-relevant files. Edit this list when a
+  # new cohort-watch dependency lands.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/pb-network/**'
+      - 'crates/pb-testkit/**'
+      - '.github/workflows/ja3-drift.yml'
+
+  # Manual trigger so the cohort owner can re-run on demand after
+  # a held bump.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  ja3-drift:
+    name: JA3 cohort drift probe
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Edge case from Module 24.2 spec: "infrastructure flap (probe
+      # server unavailable); CI runs a retry-with-backoff but never
+      # auto-marks pass on retry failure — only a green probe is
+      # green." Retries cover transient cargo-cache / rustc / network
+      # flakiness; a real cohort drift produces the same exit code
+      # every retry and ultimately fails.
+      - name: Run cohort drift probe (with retry on transient failure)
+        run: |
+          set -e
+          attempt=1
+          max=3
+          while [ "$attempt" -le "$max" ]; do
+            echo "::group::JA3 drift probe attempt $attempt/$max"
+            if cargo test -p pb-network --test cohort -- --nocapture; then
+              echo "::endgroup::"
+              echo "JA3 cohort lock OK on attempt $attempt"
+              exit 0
+            fi
+            rc=$?
+            echo "::endgroup::"
+            echo "Attempt $attempt failed with rc=$rc"
+            if [ "$attempt" -lt "$max" ]; then
+              # Linear backoff: 30s, 60s. Short enough to keep the job
+              # under the per-run budget; long enough to ride out a
+              # transient registry blip.
+              sleep_for=$((30 * attempt))
+              echo "Sleeping ${sleep_for}s before retry..."
+              sleep "$sleep_for"
+            fi
+            attempt=$((attempt + 1))
+          done
+          echo "::error::JA3 cohort drift detected — cargo test failed across all $max attempts"
+          exit 1

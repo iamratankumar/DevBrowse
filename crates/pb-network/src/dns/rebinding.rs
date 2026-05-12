@@ -21,13 +21,16 @@
 //!
 //! v1 ships no allow-list path. Self-hosted services on `localhost`
 //! or RFC1918 ranges that the user wants to reach via a public-facing
-//! name require an explicit override. The override surface lives in
-//! Module 25 / 59 (per-site permission) when WebRTC and similar
-//! features land; until then, hand-edited `/etc/hosts` is the
+//! name require an explicit override. The override surface plugs
+//! into Module 59 (per-site permission); Module 25 ships the WebRTC
+//! constraint shape but routes its grants through the same Module 59
+//! authority. Until 59 lands, hand-edited `/etc/hosts` is the
 //! supported escape hatch and the filter is unconditional.
 //
-// TODO(Module 25): expose an allow-list hook for self-hosted local
+// TODO(Module 59): expose an allow-list hook for self-hosted local
 //   services once the per-site permission center surface lands.
+//   Module 25 (WebRTC) shares the same grants authority — see
+//   `crate::webrtc::WebRtcGrants`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 

@@ -34,12 +34,23 @@
 #![forbid(unsafe_code)]
 
 pub mod blocklist;
+pub mod client_hello;
 pub mod coordinator;
 pub mod dns;
 pub mod error;
 pub mod headers;
 pub mod partition_key;
+pub mod tls;
+pub mod webrtc;
 
+pub use blocklist::{
+    strip_tracking_params, BlockEventSink, BlockKind, BlockedEvent, Blocklist, CapturingSink,
+    CookieBannerRule, InMemoryLoader, Loader, LoaderError, Manifest, NoopSink, RadixTree, Rule,
+    SignedManifestLoader, UrlParamRule, UrlParamStripList, DEFAULT_TRACKING_PARAMS,
+};
+pub use client_hello::{
+    ClientHelloPin, LOCKED_CIPHER_SUITES, LOCKED_KX_GROUPS, LOCKED_PROTOCOL_VERSIONS,
+};
 pub use coordinator::{
     bootstrap, CancellationFlag, EgressState, Mode, NetworkCoordinator, PlatformContext, Request,
     RoutedRequest, MAX_PARTITIONS,
@@ -50,6 +61,22 @@ pub use dns::{
     SingleFlightResolver, Whitelist, WhitelistError,
 };
 pub use error::NetworkError;
+pub use headers::{
+    scrub as scrub_headers, HeaderPolicy, RefererPolicy, DEVBROWSE_ACCEPT_DEFAULT,
+    DEVBROWSE_ACCEPT_ENCODING, DEVBROWSE_ACCEPT_LANGUAGE, DEVBROWSE_USER_AGENT,
+};
 pub use partition_key::{
     derive as derive_partition_key, PartitionKey, PARTITION_KEY_DOMAIN, PARTITION_KEY_LEN,
+};
+pub use tls::{
+    CapturingCtVerifier, CapturingEchVerifier, CapturingGrants, ChainValidator, CtDecision,
+    CtFailureKind, CtPolicy, CtPolicyBundle, CtVerificationOutcome, CtVerifier, DenyAllGrants,
+    EchDecision, EchFailureKind, EchPolicy, EchPolicyBundle, EchVerificationOutcome, EchVerifier,
+    EchWarning, NoOpCtVerifier, NoOpEchVerifier, SelfSignedGrants, TrustAnchorChoice,
+};
+pub use webrtc::{
+    CapturingWebRtcGrants, DenyAllWebRtcGrants, FilterOutcome, FilteredIceCandidate, IceCandidate,
+    IceCandidateFilter, IceCandidateType, IceFilterReason, IceTransport, MdnsHostnameGenerator,
+    MdnsHostnameMap, WebRtcConstraint, WebRtcDecision, WebRtcDenyReason, WebRtcGrants,
+    WebRtcPolicy,
 };

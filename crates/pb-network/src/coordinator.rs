@@ -65,22 +65,32 @@
 //   `Arc<Mutex<NetworkCoordinator>>`. Per-accept tasks deserialize the
 //   `NetworkRequest` protobuf, attach orchestrator-held tab metadata
 //   (identity_profile_id / context_id / declared_key / mode), and call
-//   `route()`.
-// TODO(Module 20): wire the DoH client into `dns` slot.
-// TODO(Module 21): wire the blocklist + URL-param strip rule list into
-//   `blocklist` slot; route step calls into it after HTTPS-Only upgrade.
-// TODO(Module 22): wire header scrubber into `headers` slot.
-// TODO(Module 23.1-23.4): wire TLS policy into `tls` slot.
-// TODO(Module 24.1): wire JA3-pinned ClientHello into `tls` slot.
-// TODO(Module 25): wire WebRTC constraint into a separate webrtc slot
-//   when WebRTC PeerConnection routing lands.
+//   `route()`. The orchestrator also wires the live ChainValidator
+//   (Modules 23.1 + 23.2 + 23.3 + 24.1, all live) into a coordinator-
+//   level `tls` slot at the same boot step; today that validator is
+//   consumed directly by the DoH transport (Module 20) and via
+//   `crate::ChainValidator::default()` everywhere else, so a single
+//   pinned ClientHello reaches every TLS site even before the slot
+//   lands here.
+// TODO(Module 23.4): once the signed preload track ships in Module 68,
+//   wire `HstsSlot` lookups against it; the slot is already on
+//   `EgressState` (per L33).
+// TODO(Module 25 wiring): WebRTC constraint surface is in
+//   `crate::webrtc`. The constraint is consulted at the renderer-broker
+//   boundary (separate from `route()`), so a coordinator-level slot is
+//   only needed once the orchestrator wants one shared instance — that
+//   ride-along lands with Module 80.
 // TODO(Module 60): network viewer subscribes to per-request classified
 //   events; wire an event channel here once the viewer surface lands.
 
+use crate::blocklist::events::BlockedEvent;
+use crate::blocklist::url_strip::strip_tracking_params;
+use crate::blocklist::Blocklist;
 use crate::dns::fallback::FallbackPolicy;
 use crate::dns::resolver::{QueryType, ResolveQuery, ResolveResult, Resolver};
 use crate::dns::DnsCache;
 use crate::error::NetworkError;
+use crate::headers::{self, HeaderPolicy};
 use crate::partition_key::{self, PartitionKey};
 use pb_config::{Config, Mode as ConfigMode, NetworkConfig};
 use pb_sandbox::{SandboxClass, SandboxProfile};
@@ -351,13 +361,32 @@ pub struct NetworkCoordinator {
     /// snapshots `system_dns_opt_in = false` until the wizard surface
     /// (Module 64) records the user's choice.
     fallback: FallbackPolicy,
-    // Trait-object slots for Modules 21-24 will land as fields on this
-    // struct when those modules wire in:
-    //   * `blocklist: Option<Arc<dyn Blocklist>>`      (Module 21)
-    //   * `headers: Option<Arc<dyn HeaderScrubber>>`   (Module 22)
-    //   * `tls: Option<Arc<dyn TlsPolicy>>`            (Modules 23.x / 24.x)
-    // The route() body short-circuits at the L30 stage today; those
-    // slots will gate the corresponding stages when present.
+
+    /// Module 21 — always-on blocklist. Bootstrap initializes with
+    /// [`Blocklist::empty`]; the orchestrator (Module 80) wires the
+    /// [`crate::blocklist::Loader`] / scheduler (and a real Module 60
+    /// event sink) before any tab opens. Because the blocklist
+    /// matches nothing while empty, an unwired broker is fail-open
+    /// for blocking — see "Initial state" in
+    /// [`crate::blocklist::Blocklist`] for the full rationale.
+    blocklist: Arc<Blocklist>,
+
+    /// Module 22 — Standard-mode header scrub policy snapshot.
+    /// Cached at bootstrap so the per-request route path doesn't
+    /// re-derive `HeaderPolicy::standard()` on every call.
+    header_policy_standard: HeaderPolicy,
+
+    /// Module 22 — Strict-mode header scrub policy snapshot. Same
+    /// cache rationale as `header_policy_standard`.
+    header_policy_strict: HeaderPolicy,
+    // Module 23.1 + 23.2 + 23.3 + 24.1 ship via `crate::ChainValidator`
+    // (held by the DoH transport today and consumed directly elsewhere
+    // through `ChainValidator::default()`). A coordinator-level
+    // `tls: Arc<crate::ChainValidator>` slot will land with Module 80
+    // once the orchestrator wants one shared instance for non-DoH
+    // dispatch + future WebSocket / fetch paths. Module 23.4 (HSTS pin
+    // store) populates the per-partition `EgressState::hsts` slot
+    // when Module 68's signed preload track ships.
 }
 
 impl fmt::Debug for NetworkCoordinator {
@@ -412,6 +441,9 @@ pub fn bootstrap(
             // `Standard` mode treats DoH outages as outages.
             system_dns_opt_in: false,
         },
+        blocklist: Blocklist::empty(),
+        header_policy_standard: HeaderPolicy::standard(),
+        header_policy_strict: HeaderPolicy::strict(),
     };
     Ok(Arc::new(Mutex::new(coord)))
 }
@@ -561,6 +593,37 @@ impl NetworkCoordinator {
         if req.cancel.is_cancelled() {
             return Err(NetworkError::Cancelled);
         }
+        // Module 21 — blocklist match. Extract the host from the
+        // (possibly-upgraded) URL and consult the live tree. On hit,
+        // emit a classified event (Module 60 surface) and return
+        // NetworkError::Blocked. The match path drops the read lock
+        // before doing any matching work.
+        let host = parse_host(&final_url).ok_or(NetworkError::InvalidUrl)?;
+        if let Some(kind) = self.blocklist.match_host(&host) {
+            self.blocklist.sink().on_block(BlockedEvent {
+                kind,
+                partition_key: canonical,
+            });
+            return Err(NetworkError::Blocked);
+        }
+        // Module 21 — URL parameter strip (L32). The strip pass runs
+        // after the host-rule check so a blocked host short-circuits
+        // before we allocate a rewritten URL.
+        let strip_list = self.blocklist.url_param_strip_list();
+        let final_url = strip_tracking_params(&final_url, &strip_list);
+        if req.cancel.is_cancelled() {
+            return Err(NetworkError::Cancelled);
+        }
+        // Module 22 — header scrub. Runs after URL strip so the
+        // Referer-policy decision sees the stripped URL (preventing
+        // tracking params from leaking into Referer on cross-origin
+        // sub-resource requests).
+        let policy = self.header_policy_for(req.mode);
+        let scrubbed_headers =
+            headers::scrub(policy, &req.site_origin, &host, &final_url, req.headers);
+        if req.cancel.is_cancelled() {
+            return Err(NetworkError::Cancelled);
+        }
         // Ensure egress state exists for this partition. Side-effect:
         // touches LRU recency. The borrow is dropped before the
         // RoutedRequest is constructed so the &mut self borrow is
@@ -571,9 +634,44 @@ impl NetworkCoordinator {
             mode: req.mode,
             final_url,
             method: req.method,
-            headers: req.headers,
+            headers: scrubbed_headers,
             body: req.body,
         })
+    }
+
+    /// Snapshot of the header scrub policy for `mode`. Cached at
+    /// bootstrap; the orchestrator may also override the cached
+    /// snapshot via [`set_header_policy`] for tests / managed
+    /// deployments.
+    pub fn header_policy_for(&self, mode: Mode) -> &HeaderPolicy {
+        match mode {
+            Mode::Standard => &self.header_policy_standard,
+            Mode::Strict => &self.header_policy_strict,
+        }
+    }
+
+    /// Override the cached header-policy snapshot for `mode`. Used
+    /// by tests + managed-policy harnesses; production wiring takes
+    /// the bootstrap defaults.
+    pub fn set_header_policy(&mut self, policy: HeaderPolicy) {
+        match policy.mode {
+            Mode::Standard => self.header_policy_standard = policy,
+            Mode::Strict => self.header_policy_strict = policy,
+        }
+    }
+
+    /// Snapshot of the live [`Blocklist`]. Cloning the `Arc` is the
+    /// canonical way for the orchestrator (Module 80) to hand the
+    /// same live blocklist to the scheduler.
+    pub fn blocklist(&self) -> Arc<Blocklist> {
+        self.blocklist.clone()
+    }
+
+    /// Replace the live [`Blocklist`]. The orchestrator calls this at
+    /// boot before any tab opens (the empty default is fail-open for
+    /// blocking, which is intentional but undesirable in steady state).
+    pub fn set_blocklist(&mut self, blocklist: Arc<Blocklist>) {
+        self.blocklist = blocklist;
     }
 }
 
@@ -610,6 +708,57 @@ fn enforce_https_only(url: &str, downgrade_approved: bool) -> Result<String, Net
 fn has_ascii_prefix_ci(haystack: &str, needle: &str) -> bool {
     haystack.len() >= needle.len()
         && haystack.as_bytes()[..needle.len()].eq_ignore_ascii_case(needle.as_bytes())
+}
+
+/// Extract the bare hostname from `url`. Hand-rolled scheme-aware
+/// parser scoped to the route-path's needs (host extraction for the
+/// blocklist match). Returns `None` for malformed inputs; callers
+/// translate that into [`NetworkError::InvalidUrl`].
+///
+/// v1 handles `scheme://[userinfo@]host[:port][/path][?query][#frag]`.
+/// IPv6 brackets (`[::1]`) are preserved verbatim because the
+/// blocklist match keys on hostnames; the rebinding filter
+/// (Module 20) is what guards against literal-IP probes.
+fn parse_host(url: &str) -> Option<String> {
+    let scheme_end = url.find("://")?;
+    let after_scheme = &url[scheme_end + 3..];
+    // Strip optional userinfo prefix.
+    let after_userinfo = match after_scheme.find('@') {
+        // Only accept '@' that comes before any '/' / '?' / '#' so a
+        // mailto-shaped path in the path component does not eat the
+        // host.
+        Some(i)
+            if !after_scheme[..i].contains('/')
+                && !after_scheme[..i].contains('?')
+                && !after_scheme[..i].contains('#') =>
+        {
+            &after_scheme[i + 1..]
+        }
+        _ => after_scheme,
+    };
+    // Find the end of the authority component: first '/' / '?' / '#'.
+    let end = after_userinfo
+        .bytes()
+        .position(|b| b == b'/' || b == b'?' || b == b'#')
+        .unwrap_or(after_userinfo.len());
+    let authority = &after_userinfo[..end];
+    if authority.is_empty() {
+        return None;
+    }
+    // Strip the port. IPv6 literals are wrapped in `[...]` so a `:`
+    // inside the bracket is part of the address, not a port marker.
+    let host = if let Some(stripped) = authority.strip_prefix('[') {
+        let bracket_end = stripped.find(']')?;
+        &stripped[..bracket_end]
+    } else if let Some(colon) = authority.find(':') {
+        &authority[..colon]
+    } else {
+        authority
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(host.to_string())
 }
 
 #[cfg(test)]
@@ -1019,6 +1168,139 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ScriptedResolver {
+        calls: std::sync::atomic::AtomicU32,
+        outcome: std::sync::Mutex<Result<crate::dns::ResolveResult, NetworkError>>,
+    }
+
+    impl ScriptedResolver {
+        fn new(outcome: Result<crate::dns::ResolveResult, NetworkError>) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicU32::new(0),
+                outcome: std::sync::Mutex::new(outcome),
+            }
+        }
+
+        fn call_count(&self) -> u32 {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl crate::dns::Resolver for ScriptedResolver {
+        fn resolve<'a>(&'a self, _q: crate::dns::ResolveQuery) -> crate::dns::ResolveFuture<'a> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let staged = self.outcome.lock().expect("scripted lock").clone();
+            Box::pin(async move { staged })
+        }
+    }
+
+    #[tokio::test]
+    async fn coordinator_resolve_isolates_partitions() {
+        // L33: same qname, two partitions — must invoke the resolver
+        // twice. A cache hit across partitions would be a §3.5
+        // partition-key gate violation.
+        let c = coord(ConfigMode::Standard).await;
+        let resolver = Arc::new(CountingResolver {
+            calls: std::sync::atomic::AtomicU32::new(0),
+        });
+        {
+            let mut g = c.lock().await;
+            g.set_resolver(resolver.clone());
+        }
+        let key_a = partition_key::derive("example.com", id(1), id(2));
+        let key_b = partition_key::derive("example.com", id(3), id(4));
+        assert_ne!(key_a, key_b, "fixture must produce distinct keys");
+        {
+            let g = c.lock().await;
+            g.resolve(
+                key_a,
+                "example.com",
+                crate::dns::QueryType::A,
+                Mode::Standard,
+            )
+            .await
+            .unwrap();
+            g.resolve(
+                key_b,
+                "example.com",
+                crate::dns::QueryType::A,
+                Mode::Standard,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            resolver.calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "cross-partition resolves must NOT share a cache entry",
+        );
+    }
+
+    #[tokio::test]
+    async fn coordinator_resolve_caches_nxdomain_negatively() {
+        // Module 20 spec: NXDOMAIN is cached at most MAX_NEGATIVE_TTL
+        // seconds. The first resolve hits the upstream; the second
+        // resolve under the same partition+qname must NOT.
+        let c = coord(ConfigMode::Standard).await;
+        let resolver = Arc::new(ScriptedResolver::new(Err(NetworkError::ResolveNxDomain)));
+        {
+            let mut g = c.lock().await;
+            g.set_resolver(resolver.clone());
+        }
+        let key = partition_key::derive("example.com", id(1), id(2));
+        let g = c.lock().await;
+        let r1 = g
+            .resolve(
+                key,
+                "missing.example",
+                crate::dns::QueryType::A,
+                Mode::Standard,
+            )
+            .await;
+        assert!(matches!(r1, Err(NetworkError::ResolveNxDomain)));
+        let r2 = g
+            .resolve(
+                key,
+                "missing.example",
+                crate::dns::QueryType::A,
+                Mode::Standard,
+            )
+            .await;
+        assert!(matches!(r2, Err(NetworkError::ResolveNxDomain)));
+        assert_eq!(
+            resolver.call_count(),
+            1,
+            "NXDOMAIN must be negatively cached so the second lookup does not re-invoke the resolver",
+        );
+    }
+
+    #[tokio::test]
+    async fn coordinator_resolve_does_not_cache_transient_errors() {
+        // Transport / timeout / outage are transient; caching them
+        // would lock a partition out of resolution for the negative
+        // TTL window. The second resolve must re-invoke.
+        let c = coord(ConfigMode::Standard).await;
+        let resolver = Arc::new(ScriptedResolver::new(Err(NetworkError::ResolveTransport)));
+        {
+            let mut g = c.lock().await;
+            g.set_resolver(resolver.clone());
+        }
+        let key = partition_key::derive("example.com", id(1), id(2));
+        let g = c.lock().await;
+        let _ = g
+            .resolve(key, "example.com", crate::dns::QueryType::A, Mode::Standard)
+            .await;
+        let _ = g
+            .resolve(key, "example.com", crate::dns::QueryType::A, Mode::Standard)
+            .await;
+        assert_eq!(
+            resolver.call_count(),
+            2,
+            "transient errors must NOT be cached — every retry re-invokes the resolver",
+        );
+    }
+
     #[tokio::test]
     async fn coordinator_drop_partition_clears_dns_cache() {
         let c = coord(ConfigMode::Standard).await;
@@ -1077,6 +1359,430 @@ mod tests {
         }
         let g = c.lock().await;
         assert!(g.fallback_policy().system_dns_opt_in);
+    }
+
+    // -- Module 21 integration tests --
+
+    use crate::blocklist::events::CapturingSink as BlockCapturingSink;
+    use crate::blocklist::rule::{
+        BlockKind as BK, Manifest as BlocklistManifest, Rule as BlockRule, UrlParamRule,
+    };
+    use crate::blocklist::Blocklist;
+
+    fn manifest_blocking(host: &str, kind: BK) -> BlocklistManifest {
+        BlocklistManifest {
+            format_version: 1,
+            content_version: 1,
+            generated_at_unix: 0,
+            host_rules: vec![BlockRule::host(host, kind)],
+            url_param_rules: vec![],
+            cookie_banner_rules: vec![],
+        }
+    }
+
+    fn manifest_strip(params: &[&str]) -> BlocklistManifest {
+        BlocklistManifest {
+            format_version: 1,
+            content_version: 1,
+            generated_at_unix: 0,
+            host_rules: vec![],
+            url_param_rules: params.iter().map(|p| UrlParamRule::new(*p)).collect(),
+            cookie_banner_rules: vec![],
+        }
+    }
+
+    fn req_to(url: &str) -> Request {
+        let key = partition_key::derive("example.com", id(1), id(2));
+        Request {
+            site_origin: "example.com".to_string(),
+            identity_profile_id: id(1),
+            context_id: id(2),
+            declared_key: key,
+            mode: Mode::Standard,
+            url: url.to_string(),
+            method: "GET".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            downgrade_approved: false,
+            cancel: CancellationFlag::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn route_blocks_hostname_on_blocklist_hit() {
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&manifest_blocking("ads.example.com", BK::Ad));
+        let sink = Arc::new(BlockCapturingSink::default());
+        bl.set_sink(sink.clone());
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://ads.example.com/banner.png");
+        let mut g = c.lock().await;
+        match g.route(req) {
+            Err(NetworkError::Blocked) => {}
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+        assert_eq!(sink.len(), 1, "blocked event must fan out");
+        let snap = sink.snapshot();
+        assert_eq!(snap[0].kind, BK::Ad);
+    }
+
+    #[tokio::test]
+    async fn route_blocks_subdomain_via_subdomain_inclusive_rule() {
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&manifest_blocking("example.com", BK::Tracker));
+        let sink = Arc::new(BlockCapturingSink::default());
+        bl.set_sink(sink.clone());
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://tracker.example.com/pixel.gif");
+        let mut g = c.lock().await;
+        match g.route(req) {
+            Err(NetworkError::Blocked) => {}
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+        assert_eq!(sink.snapshot()[0].kind, BK::Tracker);
+    }
+
+    #[tokio::test]
+    async fn route_passes_unblocked_hosts() {
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&manifest_blocking("ads.example.com", BK::Ad));
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://example.com/page");
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        assert_eq!(routed.final_url, "https://example.com/page");
+    }
+
+    #[tokio::test]
+    async fn route_strips_tracking_params() {
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&manifest_strip(&["utm_source", "fbclid"]));
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://example.com/page?q=hi&utm_source=ad&fbclid=x&page=2");
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        assert_eq!(routed.final_url, "https://example.com/page?q=hi&page=2");
+    }
+
+    #[tokio::test]
+    async fn route_strip_runs_after_blocklist_check() {
+        // A blocked host short-circuits before the strip pass — no
+        // RoutedRequest is produced and the original URL is never
+        // rewritten. (Emit-once-per-block check.)
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&BlocklistManifest {
+            format_version: 1,
+            content_version: 1,
+            generated_at_unix: 0,
+            host_rules: vec![BlockRule::host("ads.example.com", BK::Ad)],
+            url_param_rules: vec![UrlParamRule::new("utm_source")],
+            cookie_banner_rules: vec![],
+        });
+        let sink = Arc::new(BlockCapturingSink::default());
+        bl.set_sink(sink.clone());
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://ads.example.com/?utm_source=x&q=hi");
+        let mut g = c.lock().await;
+        match g.route(req) {
+            Err(NetworkError::Blocked) => {}
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+        assert_eq!(sink.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn route_with_empty_blocklist_passes_everything() {
+        let c = coord(ConfigMode::Standard).await;
+        // Default coordinator already starts with Blocklist::empty().
+        let req = req_to("https://example.com/page?utm_source=x&q=hi");
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        // Empty blocklist → no strip list → URL passes through unchanged.
+        assert_eq!(
+            routed.final_url,
+            "https://example.com/page?utm_source=x&q=hi"
+        );
+    }
+
+    // -- Module 22 integration tests --
+
+    #[tokio::test]
+    async fn route_scrubs_renderer_set_user_agent() {
+        let c = coord(ConfigMode::Standard).await;
+        let mut req = req_to("https://example.com/");
+        req.headers
+            .push(("User-Agent".to_string(), "EvilBot/1.0".to_string()));
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let ua = routed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("user-agent"))
+            .map(|(_, v)| v.clone());
+        assert_eq!(ua.as_deref(), Some(crate::headers::DEVBROWSE_USER_AGENT));
+    }
+
+    #[tokio::test]
+    async fn route_strips_renderer_set_cookie() {
+        let c = coord(ConfigMode::Standard).await;
+        let mut req = req_to("https://example.com/");
+        req.headers
+            .push(("Cookie".to_string(), "stolen=true".to_string()));
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let count = routed
+            .headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("cookie"))
+            .count();
+        assert_eq!(count, 0, "Cookie must never reach the wire from a renderer");
+    }
+
+    #[tokio::test]
+    async fn route_emits_referer_for_cross_origin_in_standard() {
+        let c = coord(ConfigMode::Standard).await;
+        let req = req_to("https://other.example/page");
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let referer = routed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("referer"))
+            .map(|(_, v)| v.clone());
+        assert_eq!(referer.as_deref(), Some("https://example.com/"));
+    }
+
+    #[tokio::test]
+    async fn route_omits_referer_in_strict_mode() {
+        let c = coord(ConfigMode::Strict).await;
+        let mut req = req_to("https://example.com/");
+        req.mode = Mode::Strict;
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let referer_count = routed
+            .headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("referer"))
+            .count();
+        assert_eq!(referer_count, 0);
+    }
+
+    #[tokio::test]
+    async fn route_omits_referer_on_https_to_http_downgrade() {
+        let c = coord(ConfigMode::Standard).await;
+        let mut req = req_to("http://example.com/");
+        req.downgrade_approved = true;
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let referer_count = routed
+            .headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("referer"))
+            .count();
+        assert_eq!(
+            referer_count, 0,
+            "L31: HTTPS->HTTP downgrade suppresses Referer"
+        );
+    }
+
+    #[tokio::test]
+    async fn route_uses_strict_policy_for_strict_mode_requests() {
+        // Mixed-mode coordinator: Standard default but a Strict tab
+        // emits no Referer / different policy snapshot. Confirms the
+        // per-request mode field wins over the bootstrap default.
+        let c = coord(ConfigMode::Standard).await;
+        let mut std_req = req_to("https://target.example/page");
+        std_req.mode = Mode::Standard;
+        let mut strict_req = req_to("https://target.example/page");
+        strict_req.mode = Mode::Strict;
+        let mut g = c.lock().await;
+        let std_out = g.route(std_req).expect("std");
+        let strict_out = g.route(strict_req).expect("strict");
+        let std_has_referer = std_out
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("referer"));
+        let strict_has_referer = strict_out
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("referer"));
+        assert!(std_has_referer, "Standard mode emits Referer");
+        assert!(!strict_has_referer, "Strict mode omits Referer");
+    }
+
+    #[tokio::test]
+    async fn route_runs_scrub_after_url_strip() {
+        // Verify ordering: a tracking param in the URL is stripped
+        // before the URL is observable for Referer computation.
+        // (Cross-origin Referer is origin-only by v1 design, so the
+        // stripped param doesn't influence the value either way --
+        // this test checks that the route path completes for a URL
+        // that requires both transformations.)
+        let c = coord(ConfigMode::Standard).await;
+        let bl = Blocklist::from_manifest(&manifest_strip(&["utm_source"]));
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(bl);
+        }
+        let req = req_to("https://other.example/path?utm_source=x&q=hi");
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        assert_eq!(routed.final_url, "https://other.example/path?q=hi");
+        let referer = routed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("referer"))
+            .map(|(_, v)| v.clone());
+        assert_eq!(referer.as_deref(), Some("https://example.com/"));
+    }
+
+    #[tokio::test]
+    async fn route_passes_through_app_headers() {
+        let c = coord(ConfigMode::Standard).await;
+        let mut req = req_to("https://example.com/");
+        req.headers.extend(vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("X-CSRF-Token".to_string(), "token-123".to_string()),
+        ]);
+        let mut g = c.lock().await;
+        let routed = g.route(req).expect("route ok");
+        let ct = routed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.clone());
+        let csrf = routed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("x-csrf-token"))
+            .map(|(_, v)| v.clone());
+        assert_eq!(ct.as_deref(), Some("application/json"));
+        assert_eq!(csrf.as_deref(), Some("token-123"));
+    }
+
+    #[tokio::test]
+    async fn coordinator_caches_per_mode_header_policy() {
+        let c = coord(ConfigMode::Standard).await;
+        let g = c.lock().await;
+        let std = g.header_policy_for(Mode::Standard);
+        let strict = g.header_policy_for(Mode::Strict);
+        assert_eq!(
+            std.referer,
+            crate::headers::RefererPolicy::StrictOriginWhenCrossOrigin
+        );
+        assert_eq!(strict.referer, crate::headers::RefererPolicy::NoReferrer);
+    }
+
+    #[tokio::test]
+    async fn coordinator_set_header_policy_overrides_cache() {
+        let c = coord(ConfigMode::Standard).await;
+        let mut custom = HeaderPolicy::standard();
+        custom.send_dnt = false;
+        {
+            let mut g = c.lock().await;
+            g.set_header_policy(custom);
+        }
+        let g = c.lock().await;
+        assert!(!g.header_policy_for(Mode::Standard).send_dnt);
+        // Strict policy snapshot is untouched.
+        assert!(g.header_policy_for(Mode::Strict).send_dnt);
+    }
+
+    #[tokio::test]
+    async fn coordinator_blocklist_can_be_swapped_at_runtime() {
+        let c = coord(ConfigMode::Standard).await;
+        let v1 = Blocklist::from_manifest(&manifest_blocking("a.example", BK::Ad));
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(v1);
+        }
+        let req1 = req_to("https://a.example/x");
+        {
+            let mut g = c.lock().await;
+            assert!(matches!(g.route(req1), Err(NetworkError::Blocked)));
+        }
+        let v2 = Blocklist::from_manifest(&manifest_blocking("b.example", BK::Tracker));
+        {
+            let mut g = c.lock().await;
+            g.set_blocklist(v2);
+        }
+        // a.example is no longer blocked, b.example now is.
+        let req2 = req_to("https://a.example/x");
+        let req3 = req_to("https://b.example/x");
+        let mut g = c.lock().await;
+        assert!(g.route(req2).is_ok());
+        assert!(matches!(g.route(req3), Err(NetworkError::Blocked)));
+    }
+
+    #[test]
+    fn parse_host_basic() {
+        assert_eq!(
+            parse_host("https://example.com/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            parse_host("https://example.com:8443/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            parse_host("https://example.com"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            parse_host("https://example.com?q=1"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            parse_host("https://example.com#frag"),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_host_strips_userinfo() {
+        assert_eq!(
+            parse_host("https://user:pass@example.com/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            parse_host("https://user@example.com/path"),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_host_handles_ipv6_literal() {
+        assert_eq!(
+            parse_host("https://[2001:db8::1]/path"),
+            Some("2001:db8::1".to_string())
+        );
+        assert_eq!(
+            parse_host("https://[2001:db8::1]:8443/path"),
+            Some("2001:db8::1".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_host_rejects_invalid() {
+        assert_eq!(parse_host(""), None);
+        assert_eq!(parse_host("not-a-url"), None);
+        assert_eq!(parse_host("https://"), None);
+        assert_eq!(parse_host("https:///path"), None);
     }
 
     #[tokio::test]

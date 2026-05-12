@@ -22,24 +22,32 @@ API readouts (canvas, WebGL, audio, fonts, timers, navigator, WebRTC),
 TLS handshake (JA3, SNI, CT), and request shape (headers, storage
 state, cache state).
 
-**Defenses:** Phase 4 (network), Phase 5 (fingerprint), Phase 10
-(adversarial verification), L21 sync that does not exfiltrate, L27
-forensic redaction, L30-L37 network-level locks, Adaptation protocol
-cohort-watch.
+**Defenses:** Phase 4 (network), Phase 5 (fingerprint), **Phase 5.5
+(Mullvad-class Strict hardening — letterboxing L42, 100 ms timer
+quantization L43, disabled-by-default API surface L44, settings-lock
+L41)**, Phase 10 (adversarial verification), L21 sync that does not
+exfiltrate, L27 forensic redaction, L30-L44 network + fingerprint
+locks, Adaptation protocol cohort-watch.
 
 **Won-by:** the user being indistinguishable from the cohort of all
-DevBrowse users on the same release.
+DevBrowse users on the same release **and the same mode** — Strict
+users form their own cohort tighter than Standard, matching Tor
+Browser / Mullvad Browser's "same major version = same cohort"
+posture.
 
 ### A2 — Compromised renderer
 
 A renderer process taken over by exploit. Tries to escalate to read
-other identities' storage, peek into the network broker, or violate
-the partition-key boundary.
+other identities' storage, peek into the network broker, violate
+the partition-key boundary, or **bypass the broker by dialing out
+directly through Gecko's internal Necko stack**.
 
 **Defenses:** Module 12 + 80.5 (kernel sandbox), pb-storage gatekeeper,
 partition-key recompute on every request (Module 19), per-process
-isolation (each renderer is its own OS process). The renderer is
-trusted to be untrusted.
+isolation (each renderer is its own OS process), **L40 renderer-
+network isolation (libxul Necko egress disabled at build time +
+sandbox `socket()` denial + Module 69 wrapper-checker verifies on
+every libxul tag bump)**. The renderer is trusted to be untrusted.
 
 **Won-by:** the gatekeeper rejecting every cross-partition access the
 renderer attempts, regardless of what it claims about its own identity.

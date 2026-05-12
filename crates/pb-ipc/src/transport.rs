@@ -1,25 +1,25 @@
-// Module 4 — pb-ipc transport layer.
-//
-// Framing: 4-byte big-endian u32 length prefix followed by payload bytes.
-//
-// Platform backends (same public API on every supported target):
-//   Unix    — tokio::net::UnixStream / UnixListener (AF_UNIX domain sockets)
-//
-// Windows backend is deferred to Phase 11.9 (Module 93). The previous v1.4
-// named-pipe implementation — which serialized reads and writes through a
-// shared Mutex on a single pipe handle — was removed in v1.9 along with
-// every other Windows code path. The Phase 11.9 replacement is a two-pipe
-// duplex (one pipe per direction) so concurrent reads and writes never
-// contend on the same handle, plus an explicit per-pipe security
-// descriptor restricting the ACL to the current user SID. See
-// docs/architecture.md §6 Phase 11.9 Module 93 for the full requirements.
-//
-// Adding a new platform: implement IpcListener, IpcConnection, IpcReadHalf,
-// IpcWriteHalf in a new cfg-gated module and re-export below.
-//
-// SECURITY INVARIANT: MAX_MESSAGE_BYTES is enforced on both send and recv.
-// Enforcing on recv prevents a compromised peer from triggering a heap-bomb
-// before the protobuf layer has a chance to validate anything.
+//! Module 4 — pb-ipc transport layer.
+//!
+//! Framing: 4-byte big-endian u32 length prefix followed by payload bytes.
+//!
+//! Platform backends (same public API on every supported target):
+//!   Unix    — tokio::net::UnixStream / UnixListener (AF_UNIX domain sockets)
+//!
+//! Windows backend is deferred to Phase 11.9 (Module 93). The previous v1.4
+//! named-pipe implementation — which serialized reads and writes through a
+//! shared Mutex on a single pipe handle — was removed in v1.9 along with
+//! every other Windows code path. The Phase 11.9 replacement is a two-pipe
+//! duplex (one pipe per direction) so concurrent reads and writes never
+//! contend on the same handle, plus an explicit per-pipe security
+//! descriptor restricting the ACL to the current user SID. See
+//! docs/architecture.md §6 Phase 11.9 Module 93 for the full requirements.
+//!
+//! Adding a new platform: implement IpcListener, IpcConnection, IpcReadHalf,
+//! IpcWriteHalf in a new cfg-gated module and re-export below.
+//!
+//! SECURITY INVARIANT: MAX_MESSAGE_BYTES is enforced on both send and recv.
+//! Enforcing on recv prevents a compromised peer from triggering a heap-bomb
+//! before the protobuf layer has a chance to validate anything.
 
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

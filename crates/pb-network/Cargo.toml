@@ -15,8 +15,24 @@ hyper-rustls   = { workspace = true }
 http           = { workspace = true }
 http-body-util = { workspace = true }
 bytes          = { workspace = true }
+rustls         = { workspace = true }
+webpki-roots   = { workspace = true }
 tokio          = { workspace = true }
 uuid           = { workspace = true }
 sha2           = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }
+
+[dev-dependencies]
+# Module 24.2 — cohort drift integration test consumes the Ja3Probe
+# fixture from pb-testkit. Cross-phase contract (README §"Cross-cutting
+# concerns" item 12).
+pb-testkit     = { path = "../pb-testkit" }
+# Module 21 — blocklist radix-tree match perf budget (< 100 µs P99 on
+# 80k-entry tree per README perf contract). Bench lives in
+# `benches/blocklist_match.rs`.
+criterion      = { workspace = true }
+
+[[bench]]
+name    = "blocklist_match"
+harness = false

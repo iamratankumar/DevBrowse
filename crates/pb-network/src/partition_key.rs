@@ -79,6 +79,16 @@ impl fmt::Debug for PartitionKey {
     }
 }
 
+// `Display` is intentionally the full 64-char hex (not redacted, unlike
+// `Debug`). The contract is documented on `to_hex` above: full-form is
+// reserved for tests and authenticated diagnostic surfaces; routine
+// logs MUST use `Debug`. Mirrors `pb_storage::partition_key`.
+//
+// TODO(Phase 10 adversarial fingerprint suite): add a probe that
+//   asserts no production log path emits a `Display`-formatted
+//   `PartitionKey` (the property is currently enforced by convention,
+//   not by code). The probe lives in `tests/cohort/` once the Phase 10
+//   harness lands.
 impl fmt::Display for PartitionKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_hex())
