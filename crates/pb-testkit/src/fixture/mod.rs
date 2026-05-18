@@ -10,6 +10,7 @@
 
 pub mod fake_doh;
 pub mod fake_mdns;
+pub mod fingerprint_override;
 pub mod ipc_pair;
 pub mod ja3_probe;
 pub mod mock_platform;
@@ -21,6 +22,10 @@ pub mod profile;
 // API shape the phase file calls out.
 pub use fake_doh::{fake_doh, FakeDohResolver, ScriptedDohResponse};
 pub use fake_mdns::{fake_mdns, FakeMdns, MdnsAnnounce, MdnsEvent};
+pub use fingerprint_override::{
+    fingerprint_override_harness, FingerprintOverrideHarness, RecordedInstall,
+    RecordingFingerprintOverride,
+};
 pub use ipc_pair::{ipc_pair, ipc_pair_with_capacity};
 pub use ja3_probe::{Ja3, Ja3Probe, ProbeError as Ja3ProbeError};
 pub use mock_platform::{

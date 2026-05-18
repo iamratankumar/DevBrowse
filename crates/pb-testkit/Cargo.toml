@@ -27,12 +27,18 @@ testkit = ["pb-ipc/testkit"]
 
 [dependencies]
 # pb-* crates whose surface this fixture wraps. Order tracks crate topology.
-pb-config    = { workspace = true }
-pb-ipc       = { workspace = true, features = ["testkit"] }
-pb-platform  = { path = "../pb-platform" }
-pb-identity  = { path = "../pb-identity" }
-pb-storage   = { path = "../pb-storage" }
-pb-sandbox   = { workspace = true }
+pb-config      = { workspace = true }
+pb-ipc         = { workspace = true, features = ["testkit"] }
+pb-platform    = { path = "../pb-platform" }
+pb-identity    = { path = "../pb-identity" }
+pb-storage     = { path = "../pb-storage" }
+pb-sandbox     = { workspace = true }
+# Phase 5 / Module 26 — fingerprint-override harness fixture so Phase 5.5
+# (Strict hardening) and Phase 10 (adversarial fingerprint suite) can drive
+# `FingerprintOverride::install` across every `JsContext` without copying
+# the in-crate test boilerplate. pb-fingerprint depends only on pb-config
+# + uuid, so pulling it in here adds no new transitive surface.
+pb-fingerprint = { path = "../pb-fingerprint" }
 
 # async + utility deps shared with the production crates we mock.
 tokio        = { workspace = true }
