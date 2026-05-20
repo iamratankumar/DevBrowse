@@ -353,6 +353,37 @@ mod tests {
     }
 
     #[test]
+    fn devbrowse_user_agent_matches_module_34_locked_value() {
+        // CROSS-MODULE REGRESSION TEST (Module 34). pb-network and
+        // pb-fingerprint are L12 sibling leaves (neither imports the
+        // other), so the alignment of the locked UA string is
+        // enforced by paired literal-string assertions on both sides.
+        // If DEVBROWSE_USER_AGENT here drifts from
+        // `pb_fingerprint::LOCKED_USER_AGENT`, the paired test
+        // `navigator_ua_matches_module_22_constant` in
+        // crates/pb-fingerprint/src/gecko/navigator.rs breaks first;
+        // if that constant drifts, this test breaks. The Phase 10
+        // adversarial suite is the third defense (live JS-vs-HTTP
+        // equality check on a spawned renderer).
+        const MODULE_34_EXPECTED_UA: &str =
+            "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
+        assert_eq!(DEVBROWSE_USER_AGENT, MODULE_34_EXPECTED_UA);
+    }
+
+    #[test]
+    fn devbrowse_accept_language_matches_module_34_locked_value() {
+        // Paired with `navigator_language_matches_module_22_accept_language`
+        // in pb-fingerprint. The q-value progression
+        // ("en-US,en;q=0.5") -> first locale "en-US" -> language list
+        // ["en-US", "en"] is the alignment contract.
+        const MODULE_34_EXPECTED_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.5";
+        assert_eq!(
+            DEVBROWSE_ACCEPT_LANGUAGE,
+            MODULE_34_EXPECTED_ACCEPT_LANGUAGE
+        );
+    }
+
+    #[test]
     fn standard_policy_uses_strict_origin_when_cross_origin() {
         let p = HeaderPolicy::standard();
         assert_eq!(p.referer, RefererPolicy::StrictOriginWhenCrossOrigin);

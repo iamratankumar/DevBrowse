@@ -230,4 +230,44 @@ mod tests {
         let ovr = RecordingFingerprintOverride::new(WebIdlSurface::Fonts);
         assert_eq!(ovr.surface(), WebIdlSurface::Fonts);
     }
+
+    // ── Cross-phase contract test (Module 27) ─────────────────────────────
+    //
+    // Proves the harness drives a *real* `FingerprintOverride` impl —
+    // not just the in-fixture `RecordingFingerprintOverride` mock —
+    // so Phase 5.5 (Strict hardening) and Phase 10 (adversarial
+    // fingerprint suite) can rely on this exact pattern. If the
+    // harness ever drifts from the production trait shape, this
+    // test breaks before downstream phases consume it.
+
+    #[test]
+    fn harness_drives_module_27_canvas_override_across_modes() {
+        use pb_fingerprint::{CanvasOverride, CanvasReadbackPolicy};
+
+        // Standard: CanvasOverride is registered structurally but
+        // carries a NativePassThrough policy (Strict-only
+        // normalization decision; see canvas.rs module doc).
+        let standard_ovr = CanvasOverride::new(pb_config::Mode::Standard);
+        let ctxs = FingerprintOverrideHarness::standard().install_into_every_context(&standard_ovr);
+        assert_eq!(ctxs.len(), JsContext::ALL.len());
+        assert_eq!(standard_ovr.surface(), WebIdlSurface::Canvas);
+        assert!(matches!(
+            standard_ovr.policy(),
+            CanvasReadbackPolicy::NativePassThrough
+        ));
+        assert_eq!(standard_ovr.profile(), None);
+
+        // Strict: same registration shape, but the policy now
+        // carries the locked profile and `install` (when libxul is
+        // wired) will activate the normalized rasterizer hook.
+        let strict_ovr = CanvasOverride::new(pb_config::Mode::Strict);
+        let ctxs = FingerprintOverrideHarness::strict().install_into_every_context(&strict_ovr);
+        assert_eq!(ctxs.len(), JsContext::ALL.len());
+        assert_eq!(strict_ovr.surface(), WebIdlSurface::Canvas);
+        assert!(matches!(
+            strict_ovr.policy(),
+            CanvasReadbackPolicy::NormalizedRasterizer(_)
+        ));
+        assert!(strict_ovr.profile().is_some());
+    }
 }
