@@ -63,12 +63,22 @@
 //   This is the structural anti-contradiction lock — a future
 //   change to either module's vendor string fails the test and
 //   forces the cohort migration to land in lockstep.
-// TODO(Phase 6 / pb-gpu): the production WebGPU backend lives in
-//   pb-gpu (Phase 6 Modules 36+). pb-gpu MUST NOT consult this
-//   module; instead pb-gpu's adapter-info code path reads its
-//   own surface and the cross-check happens in a Phase 6
-//   integration test asserting equality. This module pins the
-//   JS-facing values.
+// Module 36 (pb-gpu coordinator) has shipped: pb-gpu owns its own
+//   cohort-locked statics — `COHORT_VENDOR` ("Mozilla"),
+//   `LOCKED_GPU_FEATURES` (empty), `LOCKED_GPU_LIMITS` (WebGPU
+//   spec minima). The paired regression tests
+//   `cohort_vendor_matches_module_35_6` /
+//   `locked_gpu_features_matches_module_35_6` /
+//   `locked_limits_match_module_35_6_webgpu_spec_minima` in
+//   crates/pb-gpu/src/coordinator.rs assert byte equality with
+//   `LOCKED_WEBGPU_PROFILE.vendor.as_str()` /
+//   `.features.len()` / every `.limits` field on this side.
+//   L12 forbids pb-gpu from importing pb-fingerprint, so the
+//   alignment is enforced by paired literal-value assertions
+//   on both sides (same pattern as
+//   `DEVBROWSE_USER_AGENT` / `LOCKED_USER_AGENT` between
+//   pb-network and Module 34). Drift in either direction fails
+//   CI before merge.
 // TODO(Phase 10 / Module 71+): adversarial-fingerprint probes
 //   assert `navigator.gpu.requestAdapter().info.vendor == "Mozilla"`
 //   in Strict and one-of-five in Standard, regardless of the

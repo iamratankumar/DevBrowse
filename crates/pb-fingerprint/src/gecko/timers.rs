@@ -259,6 +259,17 @@ impl TimerProfile {
 /// Mode-invariant GPU quantum: 2 ms. Pulled out as a `pub const`
 /// so the value is visible in a single place and the two profile
 /// statics can reference it without diverging.
+///
+/// **pb-gpu Module 39 is the authoritative source of truth**
+/// (`pb_gpu::timing::GPU_TIMER_QUANTUM_NS`). This module mirrors
+/// the value at the JS-facing surface (since Module 32 owns the
+/// timer profile that the libxul bridge installs on the JS clock
+/// override points). L12 forbids pb-fingerprint from importing
+/// pb-gpu and vice-versa, so the alignment is enforced by paired
+/// literal-value assertions on both sides (same pattern as
+/// Module 36 ↔ Module 35.6 cohort vendor / features / limits).
+/// Drift on either side fails the regression
+/// `gpu_quantum_matches_module_39_pb_gpu_value` below.
 pub const GPU_QUANTUM_NS: u64 = 2_000_000;
 
 /// Standard-mode profile. 1 ms JS quantum (the §5.5 floor); the
@@ -476,10 +487,26 @@ mod tests {
     #[test]
     fn gpu_quantum_is_2ms_in_both_modes() {
         // L8 lock: GPU timestamps stay at 2 ms regardless of Mode.
-        // pb-gpu is the authoritative source; this is documentation.
+        // pb-gpu Module 39 is the authoritative source; this is
+        // the JS-side documentation.
         assert_eq!(GPU_QUANTUM_NS, 2_000_000);
         assert_eq!(STANDARD_TIMER_PROFILE.gpu_quantum_ns, GPU_QUANTUM_NS);
         assert_eq!(STRICT_TIMER_PROFILE.gpu_quantum_ns, GPU_QUANTUM_NS);
+    }
+
+    #[test]
+    fn gpu_quantum_matches_module_39_pb_gpu_value() {
+        // CROSS-MODULE REGRESSION (Module 39, pb-gpu). pb-gpu
+        // Module 39 (`pb_gpu::timing::GPU_TIMER_QUANTUM_NS`) is
+        // the authoritative source of truth. L12 forbids
+        // pb-fingerprint from importing pb-gpu, so the alignment
+        // is enforced by paired literal-value assertions on both
+        // sides. Mirror on the pb-gpu side:
+        // `gpu_timer_quantum_matches_module_32_documentation_value`
+        // in crates/pb-gpu/src/timing.rs. Drift in either
+        // direction fails CI before merge.
+        const MODULE_39_EXPECTED_GPU_TIMER_QUANTUM_NS: u64 = 2_000_000;
+        assert_eq!(GPU_QUANTUM_NS, MODULE_39_EXPECTED_GPU_TIMER_QUANTUM_NS);
     }
 
     #[test]

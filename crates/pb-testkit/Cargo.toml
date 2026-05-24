@@ -39,6 +39,12 @@ pb-sandbox     = { workspace = true }
 # the in-crate test boilerplate. pb-fingerprint depends only on pb-config
 # + uuid, so pulling it in here adds no new transitive surface.
 pb-fingerprint = { path = "../pb-fingerprint" }
+# Phase 6 / Modules 36-39 — gpu_bundle fixture wraps the GpuCoordinator +
+# MemoryBudget + QueueScheduler triple so Phase 7+ tests can assert
+# cross-identity GPU isolation without re-deriving the orchestrator
+# wiring. pb-gpu's dependency footprint is pb-config + pb-ipc + uuid;
+# all are already transitive deps here.
+pb-gpu         = { path = "../pb-gpu" }
 
 # async + utility deps shared with the production crates we mock.
 tokio        = { workspace = true }

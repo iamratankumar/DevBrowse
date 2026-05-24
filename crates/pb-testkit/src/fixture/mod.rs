@@ -11,6 +11,7 @@
 pub mod fake_doh;
 pub mod fake_mdns;
 pub mod fingerprint_override;
+pub mod gpu_bundle;
 pub mod ipc_pair;
 pub mod ja3_probe;
 pub mod mock_platform;
@@ -26,6 +27,7 @@ pub use fingerprint_override::{
     fingerprint_override_harness, FingerprintOverrideHarness, RecordedInstall,
     RecordingFingerprintOverride,
 };
+pub use gpu_bundle::{gpu_bundle, gpu_bundle_with_cap, GpuBundle};
 pub use ipc_pair::{ipc_pair, ipc_pair_with_capacity};
 pub use ja3_probe::{Ja3, Ja3Probe, ProbeError as Ja3ProbeError};
 pub use mock_platform::{

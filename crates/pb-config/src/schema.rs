@@ -59,6 +59,9 @@ pub struct Config {
     /// L37: cookie-banner auto-decline.
     #[serde(default)]
     pub cookie_banner: CookieBannerConfig,
+    /// Phase 6 / Module 37: per-identity GPU memory budget.
+    #[serde(default)]
+    pub gpu: GpuConfig,
 }
 
 impl Default for Config {
@@ -81,6 +84,7 @@ impl Default for Config {
             webrtc: WebRtcConfig::default(),
             bounce_tracker: BounceTrackerConfig::default(),
             cookie_banner: CookieBannerConfig::default(),
+            gpu: GpuConfig::default(),
         }
     }
 }
@@ -497,6 +501,35 @@ pub struct CookieBannerConfig {
     pub auto_decline_enabled: bool,
 }
 
+fn default_gpu_memory_cap_mib() -> u32 {
+    512
+}
+
+/// Phase 6 / Module 37: per-identity GPU memory budget.
+///
+/// `memory_cap_mib` is the upper bound, in mebibytes, on resident GPU
+/// allocations *per identity profile*. Module 37 enforces this cap with
+/// LRU eviction within an identity; cross-identity sharing is not
+/// permitted under any circumstance (phase-file Edge case for Module 37).
+///
+/// Bounded at load time to `64..=4096` MiB. Outside that band the policy
+/// stops being meaningful (too small → starves any non-trivial WebGPU
+/// workload; too large → defeats the per-identity isolation budget).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuConfig {
+    #[serde(default = "default_gpu_memory_cap_mib")]
+    pub memory_cap_mib: u32,
+}
+
+impl Default for GpuConfig {
+    fn default() -> Self {
+        Self {
+            memory_cap_mib: default_gpu_memory_cap_mib(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +612,20 @@ mod tests {
             !c.cookie_banner.auto_decline_enabled,
             "L37: cookie-banner auto-decline OFF until wizard records the choice"
         );
+        assert_eq!(
+            c.gpu.memory_cap_mib, 512,
+            "Phase 6 / Module 37: per-identity GPU memory cap default = 512 MiB"
+        );
+    }
+
+    #[test]
+    fn gpu_custom_cap_round_trip() {
+        let mut c = Config::default();
+        c.gpu.memory_cap_mib = 1024;
+        let s = toml::to_string(&c).expect("serialize");
+        let c2: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(c, c2);
+        assert_eq!(c2.gpu.memory_cap_mib, 1024);
     }
 
     #[test]

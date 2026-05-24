@@ -134,6 +134,16 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         )));
     }
 
+    // Phase 6 / Module 37: per-identity GPU memory cap must be in 64..=4096
+    // MiB. Below 64 MiB even a single WebGPU surface struggles; above
+    // 4096 MiB the per-identity isolation budget stops being meaningful.
+    if !(64..=4096).contains(&cfg.gpu.memory_cap_mib) {
+        return Err(ConfigError::Validation(format!(
+            "gpu.memory_cap_mib must be in 64..=4096, got {}",
+            cfg.gpu.memory_cap_mib
+        )));
+    }
+
     Ok(())
 }
 
@@ -295,6 +305,35 @@ mod tests {
             Err(ConfigError::Validation(_)) => {}
             other => panic!("expected Validation error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn validate_rejects_gpu_memory_cap_below_min() {
+        let mut cfg = Config::default();
+        cfg.gpu.memory_cap_mib = 32;
+        match validate(&cfg) {
+            Err(ConfigError::Validation(_)) => {}
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_gpu_memory_cap_above_max() {
+        let mut cfg = Config::default();
+        cfg.gpu.memory_cap_mib = 8192;
+        match validate(&cfg) {
+            Err(ConfigError::Validation(_)) => {}
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_gpu_memory_cap_at_bounds() {
+        let mut cfg = Config::default();
+        cfg.gpu.memory_cap_mib = 64;
+        validate(&cfg).expect("64 MiB is the minimum and must be accepted");
+        cfg.gpu.memory_cap_mib = 4096;
+        validate(&cfg).expect("4096 MiB is the maximum and must be accepted");
     }
 
     #[test]
