@@ -55,8 +55,10 @@
 //!     is here only because pixel readback shares the same render
 //!     profile regardless of which JS API surfaced it.
 //
-// TODO(Module 1 / libxul): the rasterizer replacement is a Gecko-
-//   side change that lands alongside the libxul tag. `CanvasOverride::install`
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the rasterizer replacement
+//   is a Gecko-side change that lands alongside the libxul tag.
+//   `CanvasOverride::install`
 //   currently has no side effects because the FFI hook is not yet
 //   live; once libxul is wired, Strict-mode install() will register
 //   a per-renderer callback that returns &LOCKED_CANVAS_PROFILE on
@@ -65,10 +67,11 @@
 //   `&'static BundledFontSet` pointing at `BUNDLED_FONT_SET_V1`.
 //   The canvas + fonts Strict cohorts are unified by address identity
 //   (see `tests::locked_profile_font_set_unifies_with_module_30`).
-// TODO(Module 28 / WebGL): share `LOCKED_CANVAS_PROFILE` from
-//   Module 28's `WebGlOverride` so `WebGLRenderingContext.readPixels`
+// Module 28 (WebGL) has shipped: `LOCKED_CANVAS_PROFILE` is shared
+//   into `WebGlReadbackPolicy` so `WebGLRenderingContext.readPixels`
 //   uses the same Strict profile and the Strict cohort is unsplit
-//   by readback API.
+//   by readback API. Address-identity assertion (`std::ptr::eq`
+//   against `&LOCKED_CANVAS_PROFILE`) lives in webgl.rs tests.
 // TODO(Phase 6 / pb-gpu): Strict-mode Canvas 2D rasterization MUST
 //   stay on CPU (`LOCKED_CANVAS_PROFILE.rasterizer = Rasterizer::Cpu`)
 //   even when pb-gpu offers a GPU-accelerated 2D path. Routing
@@ -179,52 +182,87 @@ pub static LOCKED_CANVAS_PROFILE: CanvasRenderProfile = CanvasRenderProfile {
 
 // ── Per-mode readback policy ──────────────────────────────────────────────
 
-/// Per-mode canvas readback policy. Strict pins the rasterizer to
-/// `LOCKED_CANVAS_PROFILE`; Standard leaves the native Gecko
-/// rasterizer in place.
+/// Per-mode canvas readback policy.
 ///
-/// Mode-divergence is intentional: a user choosing Standard accepts
-/// a different cohort than Strict. Same shape as Module 25
-/// `WebRtcPolicy` (Disabled vs PerSitePermission).
+/// **v1.23 amiunique-generic refactor (Phase 5.5 Module 35.5):** both
+/// modes resolve to the same `Normalized` variant carrying
+/// `LOCKED_CANVAS_PROFILE` (cohort identity is unified — every
+/// DevBrowse user appears in the same canvas-rasterizer cohort on
+/// amiunique). Modes differ only in the `farbling` field:
+///   * Strict → `farbling: None` — pure cohort lock; every Strict
+///     user sees byte-identical readback (Tor / Mullvad posture).
+///   * Standard → `farbling: Some(&STANDARD_FARBLING_PROFILE)` —
+///     same cohort base PLUS per-(origin, IdentityProfile) ±1 LSB
+///     noise on each readback byte (Brave+-grade cross-site
+///     protection while same-site identity stays stable across
+///     browser restarts).
+///
+/// Supersedes the v1.12 `NativePassThrough` / `NormalizedRasterizer`
+/// two-variant shape. Standard no longer pass-throughs — it now
+/// activates the rasterizer hook with the farbling layer on top.
+///
+/// `Eq` / `Hash` intentionally NOT derived: `FarblingProfile`
+/// carries an `f32` (audio amplitude) that does not satisfy `Eq`
+/// (`NaN != NaN` per IEEE 754). The policy is still `PartialEq`
+/// so tests can compare values, but it cannot be used as a
+/// `HashMap` key. Mirrors the `AudioReadbackPolicy` convention
+/// established when `AudioProfile.f32_quantization_step` landed
+/// in v1.14.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CanvasReadbackPolicy {
-    /// Standard: native Gecko rasterizer; no DevBrowse-side
-    /// normalization. The override registers but `install` is a
-    /// no-op so the libxul canvas pipeline is untouched.
-    NativePassThrough,
-    /// Strict: the libxul rasterizer hook produces deterministic
-    /// pixels using the referenced profile. Every Strict DevBrowse
-    /// user in the cohort sees identical readback for identical
-    /// inputs.
-    NormalizedRasterizer(&'static CanvasRenderProfile),
+    /// Canvas readback flows through the libxul rasterizer hook
+    /// producing deterministic pixels using `profile`. When
+    /// `farbling.is_some()`, the per-byte ±LSB noise from
+    /// `farbling` is applied on top using a seed derived from the
+    /// partition_key (see `pb_storage::PartitionKey::farbling_seed`
+    /// and `crate::farbling`).
+    Normalized {
+        profile: &'static CanvasRenderProfile,
+        farbling: Option<&'static crate::farbling::FarblingProfile>,
+    },
 }
 
 impl CanvasReadbackPolicy {
-    /// Locked snapshot for `mode`:
-    ///   * `Mode::Standard` -> `NativePassThrough`
-    ///   * `Mode::Strict`   -> `NormalizedRasterizer(&LOCKED_CANVAS_PROFILE)`
+    /// Locked snapshot for `mode` (v1.23):
+    ///   * `Mode::Standard` -> `Normalized { profile: &LOCKED_CANVAS_PROFILE, farbling: Some(&STANDARD_FARBLING_PROFILE) }`
+    ///   * `Mode::Strict`   -> `Normalized { profile: &LOCKED_CANVAS_PROFILE, farbling: None }`
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
-            Mode::Standard => Self::NativePassThrough,
-            Mode::Strict => Self::NormalizedRasterizer(&LOCKED_CANVAS_PROFILE),
+            Mode::Standard => Self::Normalized {
+                profile: &LOCKED_CANVAS_PROFILE,
+                farbling: Some(&crate::farbling::STANDARD_FARBLING_PROFILE),
+            },
+            Mode::Strict => Self::Normalized {
+                profile: &LOCKED_CANVAS_PROFILE,
+                farbling: None,
+            },
         }
     }
 
-    /// `Some(profile)` iff the policy normalizes readback (Strict).
-    /// `None` for Standard's native pass-through.
-    pub fn profile(&self) -> Option<&'static CanvasRenderProfile> {
+    /// The rasterizer profile this policy uses. Always
+    /// `&LOCKED_CANVAS_PROFILE` after the v1.23 refactor — both
+    /// modes share the cohort base.
+    pub fn profile(&self) -> &'static CanvasRenderProfile {
         match self {
-            Self::NativePassThrough => None,
-            Self::NormalizedRasterizer(p) => Some(*p),
+            Self::Normalized { profile, .. } => profile,
+        }
+    }
+
+    /// The farbling profile this policy carries, if any. `None`
+    /// in Strict (pure cohort lock), `Some` in Standard
+    /// (per-(origin, profile_id) noise on dynamic readbacks).
+    pub fn farbling(&self) -> Option<&'static crate::farbling::FarblingProfile> {
+        match self {
+            Self::Normalized { farbling, .. } => *farbling,
         }
     }
 
     /// True iff the libxul rasterizer hook will be activated for
-    /// this policy. Equivalent to `profile().is_some()`; offered as
-    /// a named predicate so call sites read naturally.
+    /// this policy. After the v1.23 refactor this is `true` for
+    /// both modes — both share the cohort-base rasterizer.
     pub fn normalizes(&self) -> bool {
-        matches!(self, Self::NormalizedRasterizer(_))
+        matches!(self, Self::Normalized { .. })
     }
 }
 
@@ -313,10 +351,12 @@ impl CanvasOverride {
         self.policy
     }
 
-    /// `Some(&LOCKED_CANVAS_PROFILE)` iff the override is Strict.
-    /// Standard returns `None` — the libxul-side native rasterizer
-    /// stays in place.
-    pub fn profile(&self) -> Option<&'static CanvasRenderProfile> {
+    /// The rasterizer profile this override pins. Always
+    /// `&LOCKED_CANVAS_PROFILE` after the v1.23 amiunique-generic
+    /// refactor — both modes share the cohort-base rasterizer.
+    /// Strict and Standard diverge only on the policy's farbling
+    /// slot (`policy().farbling()`).
+    pub fn profile(&self) -> &'static CanvasRenderProfile {
         self.policy.profile()
     }
 }
@@ -371,22 +411,43 @@ mod tests {
     }
 
     #[test]
-    fn standard_returns_native_pass_through() {
+    fn standard_resolves_to_cohort_base_with_farbling() {
+        // v1.23 amiunique-generic refactor: Standard shares the
+        // Strict cohort base AND carries STANDARD_FARBLING_PROFILE
+        // for per-(origin, profile_id) noise on dynamic readbacks.
         let p = CanvasReadbackPolicy::for_mode(Mode::Standard);
-        assert!(matches!(p, CanvasReadbackPolicy::NativePassThrough));
-        assert_eq!(p.profile(), None);
-        assert!(!p.normalizes());
+        assert!(matches!(p, CanvasReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_CANVAS_PROFILE));
+        let f = p
+            .farbling()
+            .expect("Standard MUST carry a farbling profile");
+        assert!(std::ptr::eq(f, &crate::farbling::STANDARD_FARBLING_PROFILE));
+        assert!(p.normalizes());
     }
 
     #[test]
-    fn strict_returns_normalized_rasterizer_with_locked_profile() {
+    fn strict_resolves_to_cohort_base_without_farbling() {
+        // v1.23: Strict shares the same cohort base (address
+        // identity vs LOCKED_CANVAS_PROFILE) but carries
+        // farbling=None — pure cohort lock, every Strict user
+        // sees byte-identical readback (Tor / Mullvad posture).
         let p = CanvasReadbackPolicy::for_mode(Mode::Strict);
-        assert!(matches!(p, CanvasReadbackPolicy::NormalizedRasterizer(_)));
-        let profile = p.profile().expect("Strict policy MUST carry a profile");
-        // Address identity: every Strict renderer reads the same
-        // singleton — that is the Strict-cohort guarantee.
-        assert!(std::ptr::eq(profile, &LOCKED_CANVAS_PROFILE));
+        assert!(matches!(p, CanvasReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_CANVAS_PROFILE));
+        assert_eq!(p.farbling(), None);
         assert!(p.normalizes());
+    }
+
+    #[test]
+    fn standard_and_strict_share_canvas_cohort_base() {
+        // v1.23 cohort unification: the rasterizer profile is the
+        // exact same static in both modes (address identity).
+        let s = CanvasReadbackPolicy::for_mode(Mode::Standard);
+        let r = CanvasReadbackPolicy::for_mode(Mode::Strict);
+        assert!(std::ptr::eq(s.profile(), r.profile()));
+        // Modes diverge ONLY on farbling.
+        assert!(s.farbling().is_some());
+        assert!(r.farbling().is_none());
     }
 
     #[test]
@@ -430,12 +491,18 @@ mod tests {
     }
 
     #[test]
-    fn standard_override_has_no_profile_strict_does() {
+    fn both_overrides_carry_the_locked_profile_v1_23() {
+        // v1.23 refactor: both modes share LOCKED_CANVAS_PROFILE.
+        // Module 27's prior "Standard has no profile" assertion
+        // is superseded — modes now differ only on the farbling
+        // layer carried by CanvasReadbackPolicy.
         let standard = CanvasOverride::new(Mode::Standard);
         let strict = CanvasOverride::new(Mode::Strict);
-        assert_eq!(standard.profile(), None);
-        let p = strict.profile().expect("Strict MUST carry a profile");
-        assert!(std::ptr::eq(p, &LOCKED_CANVAS_PROFILE));
+        assert!(std::ptr::eq(standard.profile(), &LOCKED_CANVAS_PROFILE));
+        assert!(std::ptr::eq(strict.profile(), &LOCKED_CANVAS_PROFILE));
+        // Per-mode divergence is on the farbling slot inside the policy:
+        assert!(standard.policy().farbling().is_some());
+        assert_eq!(strict.policy().farbling(), None);
     }
 
     #[test]
@@ -498,17 +565,19 @@ mod tests {
         // silently treated as native pass-through.
         fn arm(p: CanvasReadbackPolicy) -> &'static str {
             match p {
-                CanvasReadbackPolicy::NativePassThrough => "native",
-                CanvasReadbackPolicy::NormalizedRasterizer(_) => "normalized",
+                CanvasReadbackPolicy::Normalized { farbling: None, .. } => "cohort-locked",
+                CanvasReadbackPolicy::Normalized {
+                    farbling: Some(_), ..
+                } => "cohort-locked-farbled",
             }
         }
         assert_eq!(
             arm(CanvasReadbackPolicy::for_mode(Mode::Standard)),
-            "native"
+            "cohort-locked-farbled",
         );
         assert_eq!(
             arm(CanvasReadbackPolicy::for_mode(Mode::Strict)),
-            "normalized"
+            "cohort-locked",
         );
     }
 }

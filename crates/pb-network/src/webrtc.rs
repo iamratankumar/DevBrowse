@@ -38,9 +38,11 @@
 //!
 //! It IS NOT:
 //!   * A WebRTC stack. The actual SDP / ICE / DTLS-SRTP / SCTP
-//!     machinery lives in Gecko (Module 1's libxul). This module
-//!     pre-filters what Gecko's WebRTC stack is allowed to expose
-//!     to JS.
+//!     machinery lives in Gecko's libxul build (workspace-level
+//!     Cargo pin; wired into Gecko by pb-browser at Phase 11 /
+//!     Module 80 — not "Module 1", which ships only the workspace +
+//!     toolchain pin). This module pre-filters what Gecko's WebRTC
+//!     stack is allowed to expose to JS.
 //!   * A real mDNS responder. v1 carries the per-PC mDNS-hostname
 //!     -> IP map structurally; the mDNS responder that actually
 //!     announces those records on the link is in pb-platform

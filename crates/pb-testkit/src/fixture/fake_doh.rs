@@ -10,9 +10,13 @@
 //! placeholder that lets Phase 4 tests start writing assertions against
 //! a programmable DNS surface today.
 //
-// TODO(Module 20): once pb-network's DoH client trait lands, change
-//   FakeDohResolver to implement that trait directly so fixture call
-//   sites do not have to switch shape.
+// TODO(integration follow-up — Module 20 has shipped
+//   `pb_network::dns::doh_client`): change FakeDohResolver to
+//   implement the pb-network DoH client trait directly so fixture call
+//   sites do not have to switch shape. Gated on resolving the
+//   pb-testkit ↔ pb-network dep direction (L12 sibling-leaf rule;
+//   pb-testkit is the cross-phase fixture crate and may import either
+//   side per its Module 0.5 charter).
 
 use std::collections::HashMap;
 use std::net::IpAddr;

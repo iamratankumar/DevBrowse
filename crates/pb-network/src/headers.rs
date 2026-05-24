@@ -51,11 +51,20 @@
 //! 8 once the cookie storage primitive (Module 16) is exposed
 //! through pb-ipc to the network broker.
 //
-// TODO(Module 34): replace `DEVBROWSE_USER_AGENT` /
-//   `DEVBROWSE_ACCEPT_LANGUAGE` / `DEVBROWSE_ACCEPT_ENCODING` /
-//   `DEVBROWSE_ACCEPT` with the canonical `pb-fingerprint::Navigator`
-//   values. Until then v1 ships Gecko-shaped strings that match the
-//   user-visible UA cohort the JA3-pin (Module 24.1) targets.
+// Module 34 (Navigator) has shipped: `pb_fingerprint::LOCKED_USER_AGENT`
+//   + `LOCKED_LANGUAGE` carry the canonical cohort values. The
+//   constants below are duplicated here BY DESIGN (L12 sibling-leaf
+//   rule forbids pb-network → pb-fingerprint imports); paired
+//   regression tests
+//   `devbrowse_user_agent_matches_module_34_locked_value` +
+//   `devbrowse_accept_language_matches_module_34_locked_value` in
+//   pb-network catch any drift between the two sides.
+// TODO(post-v1 consolidation candidate): a single home for cross-crate
+//   cohort string constants (e.g. moving both copies into pb-config,
+//   which is a leaf both pb-network and pb-fingerprint can import).
+//   Owner unclaimed; not blocking any pending module. Cross-ref TODO
+//   in `pb-fingerprint/src/gecko/navigator.rs` describing the same
+//   resolution paths.
 // TODO(Module 59): per-site Client Hints opt-in. When the user grants
 //   `Sec-CH-UA-*` for a host, the strip list contracts to allow the
 //   override-injected hint values for that host only.
@@ -66,7 +75,7 @@
 
 use crate::Mode;
 
-// ── Locked canonical fingerprint defaults (TODO Module 34) ────────────────
+// ── Locked canonical fingerprint defaults (paired with pb-fingerprint Module 34) ──
 
 /// User-Agent advertised on every outbound request. Locked across all
 /// DevBrowse users so the cohort-watch protocol cannot fork the UA

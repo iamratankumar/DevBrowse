@@ -33,23 +33,39 @@
 //!
 //! It IS NOT:
 //!   * The FFI bridge itself. The libxul-side WebIDL hook
-//!     registration lives in `pb-browser` (Module 1's libxul tag)
-//!     and is wired via `cbindgen` exports against this trait.
+//!     registration is part of the `pb-browser` orchestrator
+//!     binary (Phase 11 / Module 80 startup sequence — pending);
+//!     pb-browser iterates `WebIdlSurface::ALL × JsContext::ALL`
+//!     at boot and installs each override via `cbindgen` exports
+//!     against this trait. The libxul ABI + L40 build config
+//!     is verified by Module 69 (Phase 9 — pending) on every
+//!     libxul tag bump. The libxul Cargo dep version is workspace-
+//!     level build infrastructure; **it is NOT "Module 1"**
+//!     (Module 1 ships only the Cargo workspace + toolchain pin).
 //!   * The per-surface normalization logic. Each of Modules 27-35
 //!     ships its own `FingerprintOverride` impl in `gecko/<surface>.rs`.
 //
-// TODO(Module 27-35): each per-surface module adds a concrete
-//   `FingerprintOverride` impl returning the matching `WebIdlSurface`
-//   variant from `surface()`. The bridge then matches on the variant
-//   to find the right plumb-in point.
-// TODO(libxul FFI bridge, post Module 1): the WebIDL hook registration
-//   is the FFI handshake. Adding a new `WebIdlSurface` variant without
+// Modules 27-35 have shipped: each per-surface module ships a
+//   concrete `FingerprintOverride` impl returning the matching
+//   `WebIdlSurface` variant from `surface()`. The bridge matches on
+//   the variant to find the right plumb-in point. Phase 5.5
+//   modules 35.6, 35.7, 35.8 each added one impl + one
+//   `WebIdlSurface` variant; 35.9 + 35.10 will add 4 more
+//   (target `WebIdlSurface::ALL.len() == 16` at Phase 5.5 exit).
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80; Module 69
+//   Phase 9 verifies on each tag bump): the WebIDL hook registration is
+//   the FFI handshake. Adding a new `WebIdlSurface` variant without
 //   the corresponding plumb-in is silently inert and a privacy
 //   regression — the bridge MUST exhaustively match `WebIdlSurface`.
-// TODO(Module 35.2 / Phase 5.5): `OverrideContext::js_context` is
-//   informational in v1 because every implementation is required to
-//   be context-inert. Phase 5.5 may want a `Cow`-style override
-//   wrapper that documents this at the type level (compile-time guarantee).
+// TODO(post-Phase-5.5 refactor candidate): `OverrideContext::js_context`
+//   is informational in v1 because every implementation is required
+//   to be context-inert. The original plan parked this against
+//   Module 35.2; 35.2 shipped without the refactor (the AsyncEventClass
+//   plumbing was the load-bearing 35.2 deliverable). A future
+//   refactor may want a `Cow`-style override wrapper that documents
+//   context-inert at the type level (compile-time guarantee instead
+//   of trait-doc obligation). Owner unclaimed; not blocking any
+//   pending module.
 
 use pb_config::Mode;
 use uuid::Uuid;
@@ -199,10 +215,115 @@ pub enum WebIdlSurface {
     /// Module 33 — `Intl.DateTimeFormat.resolvedOptions().timeZone` /
     /// `Date.prototype.getTimezoneOffset` / `Intl.Locale` defaults.
     Timezone,
-    /// Module 34 — `navigator.userAgent` / `userAgentData` /
-    /// `plugins` / `mimeTypes` / `languages` / `hardwareConcurrency` /
-    /// `deviceMemory`.
+    /// Module 34 — `navigator.userAgent` / `plugins` / `mimeTypes` /
+    /// `languages` / `hardwareConcurrency` / `deviceMemory` / etc.
+    /// **`navigator.userAgentData` is intentionally NOT exposed** —
+    /// Firefox does not implement the Chromium Client Hints API;
+    /// DevBrowse blends into the Firefox cohort by matching that
+    /// absence rather than spoofing a brand list.
     Navigator,
+    /// Module 35.6 — `navigator.gpu.requestAdapter()` /
+    /// `GPUAdapter.info` / `GPUAdapter.features` /
+    /// `GPUAdapter.limits` / `GPUDevice.lost`. Strict cohort-locks
+    /// to `LOCKED_WEBGPU_PROFILE` (vendor = `"Mozilla"`, matching
+    /// Module 28 WebGL); Standard buckets the vendor class to one
+    /// of {Intel, NVIDIA, AMD, Apple, Other} while locking
+    /// architecture / driver / features / limits to the same
+    /// cohort base. WebGPU stays USABLE in Strict — Tor / Mullvad
+    /// disable WebGPU entirely; DevBrowse goes structurally ahead
+    /// of them on this v2025+ surface.
+    WebGpu,
+    /// Module 35.7 — `speechSynthesis.getVoices()` /
+    /// `speechSynthesis.onvoiceschanged`. Strict locks to a
+    /// 4-voice cohort (en-US / en-GB / ja-JP / ar-SA covering
+    /// Latin / CJK / Arabic script directions) preserving
+    /// screen-reader accessibility; Tor returns the empty list
+    /// (breaks accessibility) — DevBrowse goes structurally ahead.
+    /// Standard locale-buckets the visible voice set.
+    SpeechSynthesis,
+    /// Module 35.7 — `navigator.mediaCapabilities.decodingInfo()` /
+    /// `encodingInfo()`. Mode-invariant lock on the codec
+    /// `{supported, smooth, powerEfficient}` answer table —
+    /// H.264 baseline / VP9 / AAC / Opus / MP3 supported; HEVC /
+    /// AV1 unsupported — regardless of host hardware. Actual
+    /// playback uses real codecs (EME / DRM unaffected).
+    MediaCapabilities,
+    /// Module 35.8 — `navigator.connection` (Network Information
+    /// API). Strict removes the API entirely (`navigator.connection`
+    /// is `undefined`; L44 pattern matching Module 31 Battery's
+    /// mode-invariant removal but Strict-only here). Standard
+    /// cohort-locks to broadband values (`effectiveType = "4g"`,
+    /// `downlink = 10`, `rtt = 50`, `saveData = false`,
+    /// `type = "wifi"`) so connection-class — a strong geographic
+    /// correlate, especially on mobile (Phase 12) — does not leak.
+    /// Tor returns a stub but still exposes the API surface;
+    /// DevBrowse goes structurally ahead by removing the surface in
+    /// Strict.
+    NetworkInformation,
+    /// Module 35.9 — `navigator.permissions.query()`. Strict returns
+    /// `"denied"` for every API in Module 35.3's L44 disabled list
+    /// (cross-coupling: the L44 enum is the source of truth) and
+    /// `"prompt"` for every other API name (polluted-oracle
+    /// protection — never reveals that a gate exists). Standard
+    /// consults Module 59 (`PermissionStore`) per-API. The override
+    /// sees one API name at a time; bulk enumeration is structurally
+    /// impossible.
+    Permissions,
+    /// Module 35.9 — `navigator.storage.estimate()`. Strict returns
+    /// `{quota: 0, usage: 0}` (Tor parity); Standard returns
+    /// `{quota: 1 GiB, usage: 0}` (locked cohort value; per-origin
+    /// actual usage hidden behind the partition-key boundary so
+    /// sites can't probe their own quota).
+    StorageEstimate,
+    /// Module 35.10 — Display capabilities (`window.devicePixelRatio`,
+    /// `screen.colorDepth`, `screen.pixelDepth`, `screen.orientation`,
+    /// `OrientationChange` events). Strict locks the
+    /// desktop-class cohort (`dpr=1.0`, `colorDepth=24`,
+    /// `pixelDepth=24`, `orientation=landscape-primary/0°`).
+    /// Standard buckets DPR into `{1.0, 1.5, 2.0, 3.0}` so Retina
+    /// UX is preserved while every Standard user reports one of
+    /// four cohorts (substantially better than Tor's hard 1.0).
+    /// Closes the per-device fingerprint signals Module 35.1's
+    /// letterboxer does not address.
+    DisplayCapabilities,
+    /// Module 35.10 — Touch surface (`navigator.maxTouchPoints`,
+    /// `ontouchstart`, pointer / hover media queries). Both modes
+    /// on desktop share `maxTouchPoints=0` + `pointer=fine` +
+    /// `hover=hover` (the v1.23 amiunique-generic cohort lock —
+    /// Standard desktop joins the Strict desktop cohort instead of
+    /// reporting native). Mobile platforms (Phase 12) carve out
+    /// via pb-platform detection and pass-through actual touch
+    /// values to preserve mobile-responsive site compatibility.
+    /// **Module 34 boundary**: `maxTouchPoints` is NOT in
+    /// `NavigatorSurface::ALL`; this surface owns it.
+    TouchSurface,
+    /// Module 35.11 — DOMRect / element-bounding-box surface
+    /// covering `Element.getClientRects()`,
+    /// `Element.getBoundingClientRect()`, `Range.getClientRects()`,
+    /// `Range.getBoundingClientRect()`, and
+    /// `CanvasRenderingContext2D.measureText()`. Sub-pixel
+    /// positions and text-metrics widths leak per-font-rendering
+    /// and per-host-DPI signals (Tor bug 1507879; CreepJS probes).
+    /// Strict snaps every DOMRect coordinate to integers and
+    /// every TextMetrics width to integer pixels; Standard
+    /// farbles via the per-(origin, profile) seed using the
+    /// `FarblingSurface::DomRect` and `::TextMetrics` tags
+    /// (added 2026-05-22, P1-4).
+    DomRect,
+    /// Module 35.12 — `Intl.*` defaults beyond the timezone
+    /// surface Module 33 already covers (`Intl.NumberFormat`,
+    /// `Intl.Collator`, `Intl.RelativeTimeFormat`,
+    /// `Intl.PluralRules`). Each carries per-locale defaults that
+    /// reveal the host locale catalog (numbering systems available,
+    /// collator strength, etc.). Both modes lock to the `en-US`
+    /// cohort defaults matching `LOCKED_LANGUAGE` (Module 34).
+    Intl,
+    /// Module 35.13 — `navigator.keyboard.getLayoutMap()` (W3C
+    /// Keyboard Map API). Returns a `Map<USB-HID-code, key-glyph>`
+    /// that reveals the host keyboard layout (QWERTY vs AZERTY vs
+    /// Cyrillic etc.) — high-entropy locale signal. Both modes
+    /// lock to the US-QWERTY map (matches `LOCKED_LANGUAGE = en-US`).
+    KeyboardLayoutMap,
 }
 
 impl WebIdlSurface {
@@ -219,6 +340,17 @@ impl WebIdlSurface {
         Self::Timers,
         Self::Timezone,
         Self::Navigator,
+        Self::WebGpu,
+        Self::SpeechSynthesis,
+        Self::MediaCapabilities,
+        Self::NetworkInformation,
+        Self::Permissions,
+        Self::StorageEstimate,
+        Self::DisplayCapabilities,
+        Self::TouchSurface,
+        Self::DomRect,
+        Self::Intl,
+        Self::KeyboardLayoutMap,
     ];
 }
 
@@ -256,6 +388,25 @@ pub trait FingerprintOverride: Send + Sync + std::fmt::Debug {
     /// queries, no entropy sampling. Cohort identity depends on
     /// `install` being a pure function of its inputs.
     fn install(&self, ctx: &OverrideContext);
+}
+
+/// v1 helper: `install()` is a no-op pending libxul FFI wiring
+/// (pb-browser Phase 11 / Module 80; verified by Module 69 in
+/// Phase 9). Each per-surface override calls this from its
+/// `install` body to centralize the "v1 no-op" rationale and
+/// silence the unused-variable lint uniformly across all
+/// implementations.
+///
+/// The `_` underscores intentionally discard the args; the FFI
+/// bridge consumes them once the wiring lands.
+///
+/// Standardizes the `let _ = (self.policy, JsContext::ALL, ...)`
+/// pattern that previously appeared inline in every override
+/// (P3-5, 2026-05-22).
+#[inline(always)]
+pub fn noop_install_pending_ffi(_ctx: &OverrideContext) {
+    // v1: no side effect. When the libxul FFI lands, per-surface
+    // overrides replace this call with their actual wiring.
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -310,11 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn webidl_surface_all_covers_modules_27_through_34() {
-        // Module 35 (WebKit stub) is not a Gecko WebIDL plumb-in.
-        // The 8 surfaces here are the Gecko-side hooks Modules 27-34
-        // ship; Phase 5.5 may add Strict-only variants on top.
-        assert_eq!(WebIdlSurface::ALL.len(), 8);
+    fn webidl_surface_all_covers_modules_27_through_35_13() {
+        // 8 Phase-5 surfaces (Modules 27-34) + 8 Phase-5.5
+        // surfaces (35.6-35.10) + 3 post-Phase-5.5-audit surfaces
+        // (35.11 DomRect, 35.12 Intl, 35.13 KeyboardLayoutMap —
+        // landed 2026-05-22 from the comprehensive audit). ALL =
+        // 19.
+        assert_eq!(WebIdlSurface::ALL.len(), 19);
         for v in [
             WebIdlSurface::Canvas,
             WebIdlSurface::WebGl,
@@ -324,6 +477,17 @@ mod tests {
             WebIdlSurface::Timers,
             WebIdlSurface::Timezone,
             WebIdlSurface::Navigator,
+            WebIdlSurface::WebGpu,
+            WebIdlSurface::SpeechSynthesis,
+            WebIdlSurface::MediaCapabilities,
+            WebIdlSurface::NetworkInformation,
+            WebIdlSurface::Permissions,
+            WebIdlSurface::StorageEstimate,
+            WebIdlSurface::DisplayCapabilities,
+            WebIdlSurface::TouchSurface,
+            WebIdlSurface::DomRect,
+            WebIdlSurface::Intl,
+            WebIdlSurface::KeyboardLayoutMap,
         ] {
             assert!(WebIdlSurface::ALL.contains(&v), "missing surface: {:?}", v);
         }
@@ -393,6 +557,17 @@ mod tests {
                 WebIdlSurface::Timers => "timers",
                 WebIdlSurface::Timezone => "timezone",
                 WebIdlSurface::Navigator => "navigator",
+                WebIdlSurface::WebGpu => "webgpu",
+                WebIdlSurface::SpeechSynthesis => "speech-synthesis",
+                WebIdlSurface::MediaCapabilities => "media-capabilities",
+                WebIdlSurface::NetworkInformation => "network-information",
+                WebIdlSurface::Permissions => "permissions",
+                WebIdlSurface::StorageEstimate => "storage-estimate",
+                WebIdlSurface::DisplayCapabilities => "display-capabilities",
+                WebIdlSurface::TouchSurface => "touch-surface",
+                WebIdlSurface::DomRect => "dom-rect",
+                WebIdlSurface::Intl => "intl",
+                WebIdlSurface::KeyboardLayoutMap => "keyboard-layout-map",
             }
         }
         for s in WebIdlSurface::ALL {

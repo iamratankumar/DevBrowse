@@ -22,8 +22,11 @@
 //! task observes the signal and returns. Tests use the synchronous
 //! `tick_once()` entrypoint to drive a single refresh deterministically.
 //
-// TODO(Module 11): replace the `WarningSink` placeholder with the
-//   real Module 11 warning surface once it lands.
+// TODO(integration with Module 11 warning surface — Module 11 has
+//   shipped `crates/pb-identity/src/warnings.rs`): replace the local
+//   `WarningSink` placeholder with the pb-identity warning surface.
+//   Integration is gated on pb-identity ↔ pb-network IPC wiring
+//   which lands with the orchestrator at Phase 11 / Module 80.
 // TODO(Module 67): with a real Loader the scheduler periodicity
 //   should respect the manifest's signed `valid_through` field.
 

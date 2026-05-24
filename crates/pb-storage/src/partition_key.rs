@@ -44,6 +44,20 @@ pub const PARTITION_KEY_DOMAIN: &[u8] = b"PB-PARTKEY-V1";
 /// Width of a partition key in bytes (SHA-256 output).
 pub const PARTITION_KEY_LEN: usize = 32;
 
+/// Domain-separation label for the v1 farbling seed (Phase 5.5
+/// Module 35.5). Reuses the partition_key SHA-256 mechanism with
+/// a distinct domain prefix so the seed is disjoint from the key
+/// by construction — neither value leaks the other. Versioned so
+/// a future change (e.g. switching to HKDF when the Phase 11.5
+/// sync work adds the workspace dep) produces disjoint seeds
+/// from v1 and the cohort migration is observable.
+pub const FARBLING_SEED_DOMAIN: &[u8] = b"PB-FARBLING-V1";
+
+/// Width of a farbling seed in bytes. 16 bytes = 128 bits is
+/// adequate for the noise-source application (Phase 5.5 Module
+/// 35.5); not used as a long-term secret.
+pub const FARBLING_SEED_LEN: usize = 16;
+
 /// A 32-byte partition key. Opaque newtype so callers cannot construct
 /// one without going through [`derive`] and cannot accidentally consume
 /// a partial key as the gatekeeper input.
@@ -60,6 +74,40 @@ impl PartitionKey {
     /// the column value on every storage row.
     pub fn as_bytes(&self) -> &[u8; PARTITION_KEY_LEN] {
         &self.0
+    }
+
+    /// Derive a 16-byte farbling seed for this partition.
+    ///
+    /// Used by `pb-fingerprint` Module 35.5 to compute
+    /// per-(origin, IdentityProfile) deterministic noise on
+    /// dynamic readback surfaces (canvas / WebGL numeric / audio)
+    /// in Standard mode. Same partition key always yields the
+    /// same seed; different partition keys yield different seeds
+    /// (cross-site protection inherits from the partition_key
+    /// per-(origin, profile_id) keying per §3.5).
+    ///
+    /// **Cohort-correctness property:** the seed is a SHA-256
+    /// sub-derivation with a disjoint domain prefix
+    /// ([`FARBLING_SEED_DOMAIN`]). The partition key's bytes are
+    /// already a uniform SHA-256 output, so a single
+    /// domain-separated SHA-256 yields a uniformly-distributed
+    /// 16-byte sub-key — functionally equivalent to HKDF-Expand
+    /// over the same input. A future migration to HKDF (when
+    /// Phase 11.5 sync adds the workspace dep per L22) bumps
+    /// the domain label to v2.
+    ///
+    /// L27: the seed is sensitive — it would let an adversary
+    /// who learned it predict the farbling for any (origin,
+    /// profile_id). Treat it like the partition key itself:
+    /// never log, never echo to a `Display` impl.
+    pub fn farbling_seed(&self) -> [u8; FARBLING_SEED_LEN] {
+        let mut h = Sha256::new();
+        h.update(FARBLING_SEED_DOMAIN);
+        h.update(self.0);
+        let out = h.finalize();
+        let mut seed = [0u8; FARBLING_SEED_LEN];
+        seed.copy_from_slice(&out[..FARBLING_SEED_LEN]);
+        seed
     }
 
     /// Hex-encoded full key (64 ASCII chars). Used in tests and in
@@ -240,6 +288,74 @@ mod tests {
         let mut expected = [0u8; PARTITION_KEY_LEN];
         expected.copy_from_slice(&h.finalize());
         assert_eq!(k.as_bytes(), &expected);
+    }
+
+    #[test]
+    fn farbling_seed_is_sixteen_bytes_and_deterministic() {
+        let k = derive("example.com", id(1), id(2));
+        let s1 = k.farbling_seed();
+        let s2 = k.farbling_seed();
+        assert_eq!(s1.len(), FARBLING_SEED_LEN);
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn farbling_seed_differs_across_origins() {
+        let a = derive("example.com", id(1), id(2)).farbling_seed();
+        let b = derive("evil.com", id(1), id(2)).farbling_seed();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn farbling_seed_differs_across_identities() {
+        let a = derive("example.com", id(1), id(2)).farbling_seed();
+        let b = derive("example.com", id(99), id(2)).farbling_seed();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn farbling_seed_differs_across_contexts() {
+        let a = derive("example.com", id(1), id(2)).farbling_seed();
+        let b = derive("example.com", id(1), id(99)).farbling_seed();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn farbling_seed_is_disjoint_from_partition_key_by_construction() {
+        // The seed and the key MUST NOT match. They're derived
+        // from the same partition_key.bytes input but with
+        // distinct domain prefixes, so the SHA-256 outputs are
+        // disjoint by construction. A future bug that drops the
+        // FARBLING_SEED_DOMAIN prefix would make the seed equal
+        // the first 16 bytes of the partition key.
+        let k = derive("example.com", id(1), id(2));
+        let seed = k.farbling_seed();
+        let key_bytes = k.as_bytes();
+        // Compare against the first 16 bytes of the key (length
+        // of the seed). The two MUST differ.
+        let mut leaked = [0u8; FARBLING_SEED_LEN];
+        leaked.copy_from_slice(&key_bytes[..FARBLING_SEED_LEN]);
+        assert_ne!(seed, leaked);
+    }
+
+    #[test]
+    fn farbling_seed_known_answer_v1() {
+        // Pin the v1 farbling seed derivation. If this hash ever
+        // changes, FARBLING_SEED_DOMAIN MUST be bumped to v2 so
+        // the cohort migration is observable.
+        let k = derive(
+            "example.com",
+            Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001),
+            Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0002),
+        );
+        // Recompute by hand to verify the encoding.
+        let mut h = Sha256::new();
+        h.update(b"PB-FARBLING-V1");
+        h.update(k.as_bytes());
+        let out = h.finalize();
+        let mut expected = [0u8; FARBLING_SEED_LEN];
+        expected.copy_from_slice(&out[..FARBLING_SEED_LEN]);
+        assert_eq!(k.farbling_seed(), expected);
     }
 
     #[test]

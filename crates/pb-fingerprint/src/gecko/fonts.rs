@@ -55,26 +55,32 @@
 //!     including the phase-file edge case (font-load callback timing).
 //!
 //! It IS NOT:
-//!   * The actual bundled font binaries. Module 1 (libxul tag)
-//!     ships the OTF / TTF files; this module pins the family-name
-//!     list the renderer must honor. A bundled font that
-//!     disappears from the libxul build silently splits the cohort.
+//!   * The actual bundled font binaries. The libxul build
+//!     (workspace-level Cargo pin; wired into Gecko by pb-browser
+//!     at Phase 11 / Module 80) ships the OTF / TTF files; this
+//!     module pins the family-name list the renderer must honor.
+//!     A bundled font that disappears from the libxul build
+//!     silently splits the cohort. (Not "Module 1" — that module
+//!     ships only the workspace + toolchain pin.)
 //!   * The Module 59 permission center itself. The
 //!     `FontsGrants::allows_full_enumeration` callback is consulted
 //!     by the libxul-side enumerator; Module 59 supplies the
 //!     concrete impl that consults the user's stored per-site grant.
 //
-// TODO(Module 1 / libxul): the bundled font OTFs ship inside the
-//   libxul tag. If a future libxul bump drops Arimo / Tinos / Cousine
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the bundled font OTFs ship
+//   inside the libxul tag. If a future libxul bump drops Arimo /
+//   Tinos / Cousine
 //   or a Noto-coverage face, the Strict cohort silently shrinks.
 //   Module 69 (wrapper-compatibility checker) MUST verify
 //   `BUNDLED_FONT_SET_V1.family_names` against the actual libxul
 //   font manifest on every tag bump and fail the build on drift.
-// TODO(Module 27 / canvas): `CanvasRenderProfile::font_set` is now
-//   `&'static BundledFontSet` (replacing the v1 `&'static str`
-//   label). The cohort-unification between Module 27 and Module 30
-//   is asserted by address identity (`std::ptr::eq(font_set,
-//   &BUNDLED_FONT_SET_V1)`) in both canvas.rs and fonts.rs tests.
+// Module 27 (canvas) cross-coupling has shipped:
+//   `CanvasRenderProfile::font_set` is `&'static BundledFontSet`
+//   (replacing the v1 `&'static str` label). The cohort-unification
+//   between Module 27 and Module 30 is asserted by address identity
+//   (`std::ptr::eq(font_set, &BUNDLED_FONT_SET_V1)`) in both
+//   canvas.rs and fonts.rs tests.
 // TODO(Module 59 / permission center): wire
 //   `FontsGrants::allows_full_enumeration` into the user's stored
 //   per-site grant store. Strict short-circuits before consulting
@@ -160,7 +166,11 @@ pub static BUNDLED_FONT_SET_V1: BundledFontSet = BundledFontSet {
         "Noto Sans CJK KR",
         "Noto Naskh Arabic",
         "Noto Nastaliq Urdu",
-        // "Noto Sans Hebrew",
+        // Hebrew script coverage deferred — adding "Noto Sans
+        // Hebrew" would be a cohort-shift under the Adaptation
+        // protocol (every bundled-font change forces a libxul tag
+        // re-verification via Module 69). Defer until Phase 12
+        // mobile reopens the bundled-font set.
         "Noto Sans Devanagari",
         "Noto Sans Thai",
         "Noto Sans Bengali",
@@ -194,8 +204,10 @@ pub enum FontBucket {
     Cjk,
     /// Arabic + Arabic Presentation Forms.
     Arabic,
-    /// Hebrew.
-    //Hebrew,
+    // Hebrew bucket deferred — adding `Hebrew` is a cohort shift
+    // under the Adaptation protocol; defer until Phase 12 mobile
+    // reopens the bucket set (see crate-level note in
+    // BUNDLED_FONT_SET_V1 for the parallel font-binary deferral).
     /// Devanagari + Indic complement.
     Devanagari,
     /// Cyrillic + Cyrillic Supplement.
@@ -217,7 +229,7 @@ impl FontBucket {
         Self::LatinExtended,
         Self::Cjk,
         Self::Arabic,
-        //Self::Hebrew,
+        // Hebrew bucket deferred (see FontBucket variant comment).
         Self::Devanagari,
         Self::Cyrillic,
         Self::Greek,
@@ -359,6 +371,25 @@ impl FontsGrants for CapturingFontsGrants {
             .unwrap()
             .push((ctx.mode(), origin.to_string()));
         self.answer
+    }
+}
+
+/// Adversarial / hostile grants impl for fuzz tests (P1-6,
+/// 2026-05-22). Always returns `true` regardless of mode or
+/// origin — simulates a hostile Module 59 implementation that
+/// would grant full enumeration to every site. Used to assert
+/// that Strict mode short-circuits BEFORE consulting `FontsGrants`
+/// (the L41 structural lock).
+///
+/// **Adversarial fixture** — never wire into production. The
+/// libxul bridge for Strict mode MUST NOT call into this trait at
+/// all; if it does, the L41 lock is leaking.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HostileFontsGrants;
+
+impl FontsGrants for HostileFontsGrants {
+    fn allows_full_enumeration(&self, _ctx: &OverrideContext, _origin: &str) -> bool {
+        true
     }
 }
 
@@ -513,7 +544,8 @@ mod tests {
             "Noto Sans CJK KR",
             "Noto Naskh Arabic",
             "Noto Nastaliq Urdu",
-            //"Noto Sans Hebrew",
+            // Hebrew script coverage deferred — see
+            // BUNDLED_FONT_SET_V1 comment.
             "Noto Sans Devanagari",
         ];
         for needle in must_cover {
@@ -643,6 +675,33 @@ mod tests {
         assert_send_sync::<StandardBucketedTable>();
         assert_send_sync::<DenyAllFontsGrants>();
         assert_send_sync::<CapturingFontsGrants>();
+        assert_send_sync::<HostileFontsGrants>();
+    }
+
+    #[test]
+    fn strict_short_circuits_hostile_fonts_grants() {
+        // P1-6 (2026-05-22). The L41 structural lock for fonts
+        // says: Strict mode resolves to `BundledOnly(...)` BEFORE
+        // any FontsGrants is consulted. A hostile / buggy grants
+        // impl that always returns `true` MUST NOT loosen Strict.
+        //
+        // This module's policy `for_mode` does not take grants —
+        // the trait is consulted libxul-side on every full-
+        // enumeration probe. We assert the structural invariant:
+        // `for_mode(Mode::Strict)` always resolves to
+        // `BundledOnly(&BUNDLED_FONT_SET_V1)` regardless of any
+        // grants instance the caller passes around the policy.
+        let _hostile = HostileFontsGrants;
+        let p = FontsEnumerationPolicy::for_mode(Mode::Strict);
+        match p {
+            FontsEnumerationPolicy::LockedAllowlist(set) => {
+                assert!(std::ptr::eq(set, &BUNDLED_FONT_SET_V1));
+            }
+            other => panic!(
+                "Strict must resolve to LockedAllowlist regardless of any FontsGrants impl; got {:?}",
+                other,
+            ),
+        }
     }
 
     #[test]
@@ -689,7 +748,7 @@ mod tests {
             FontBucket::LatinExtended,
             FontBucket::Cjk,
             FontBucket::Arabic,
-            //FontBucket::Hebrew,
+            // FontBucket::Hebrew deferred (see variant comment).
             FontBucket::Devanagari,
             FontBucket::Cyrillic,
             FontBucket::Greek,

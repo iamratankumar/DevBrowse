@@ -73,8 +73,9 @@
 //!     the allowlist go through the cohort-watch adaptation protocol
 //!     (README §Adaptation protocol).
 
-// TODO(Module 1 / libxul): the WebGL hook replacement is a Gecko-
-//   side change that lands alongside the libxul tag.
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the WebGL hook replacement
+//   is a Gecko-side change that lands alongside the libxul tag.
 //   `WebGlOverride::install` currently has no side effects because
 //   the FFI hook is not yet live; once libxul is wired, Strict-mode
 //   install() will register a per-renderer callback that returns
@@ -332,57 +333,83 @@ pub static LOCKED_WEBGL_PROFILE: WebGlProfile = WebGlProfile {
 /// to `LOCKED_WEBGL_PROFILE`; Standard leaves the native Gecko
 /// surface in place.
 ///
-/// Mode-divergence is intentional: a user choosing Standard accepts
-/// a different cohort than Strict. Same shape as Module 27
-/// `CanvasReadbackPolicy` (NativePassThrough vs NormalizedRasterizer).
+/// Per-mode WebGL readback policy.
+///
+/// **v1.23 amiunique-generic refactor (Phase 5.5 Module 35.5):**
+/// both modes resolve to the same `Normalized` variant carrying
+/// `LOCKED_WEBGL_PROFILE`. Standard now locks vendor / renderer /
+/// extension allowlist to the same cohort base as Strict (was:
+/// native pass-through) AND adds per-(origin, IdentityProfile)
+/// ±1 noise on numeric `MAX_*` parameters. Strict keeps the pure
+/// cohort lock (`farbling: None`).
+///
+/// Supersedes the v1.13 `NativePassThrough` / `NormalizedProfile`
+/// two-variant shape. Standard no longer pass-throughs; the
+/// vendor=Mozilla / renderer=Mozilla / 5-extension allowlist now
+/// applies to both modes.
+///
+/// `Eq` / `Hash` intentionally NOT derived for the same reason
+/// as `CanvasReadbackPolicy`: the embedded `FarblingProfile`
+/// carries an `f32`.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WebGlReadbackPolicy {
-    /// Standard: native Gecko WebGL surface; no DevBrowse-side
-    /// normalization. The override registers but `install` is a
-    /// no-op so the libxul WebGL pipeline is untouched. Firefox's
-    /// default `webgl.enable-debug-renderer-info = false` floor is
-    /// inherited.
-    NativePassThrough,
-    /// Strict: the libxul WebGL hook serves cohort-locked values
-    /// from the referenced profile. Every Strict DevBrowse user in
-    /// the cohort sees identical `getParameter` /
-    /// `getSupportedExtensions` results.
-    NormalizedProfile(&'static WebGlProfile),
+    /// WebGL parameter readout flows through the libxul hook
+    /// returning fields from `profile`. When `farbling.is_some()`,
+    /// the per-parameter ±1 noise from `farbling` is applied to
+    /// numeric `MAX_*` values (clamped to stay within the
+    /// cohort-locked bounds in `profile`).
+    Normalized {
+        profile: &'static WebGlProfile,
+        farbling: Option<&'static crate::farbling::FarblingProfile>,
+    },
 }
 
 impl WebGlReadbackPolicy {
-    /// Locked snapshot for `mode`:
-    ///   * `Mode::Standard` -> `NativePassThrough`
-    ///   * `Mode::Strict`   -> `NormalizedProfile(&LOCKED_WEBGL_PROFILE)`
+    /// Locked snapshot for `mode` (v1.23):
+    ///   * `Mode::Standard` -> `Normalized { profile: &LOCKED_WEBGL_PROFILE, farbling: Some(&STANDARD_FARBLING_PROFILE) }`
+    ///   * `Mode::Strict`   -> `Normalized { profile: &LOCKED_WEBGL_PROFILE, farbling: None }`
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
-            Mode::Standard => Self::NativePassThrough,
-            Mode::Strict => Self::NormalizedProfile(&LOCKED_WEBGL_PROFILE),
+            Mode::Standard => Self::Normalized {
+                profile: &LOCKED_WEBGL_PROFILE,
+                farbling: Some(&crate::farbling::STANDARD_FARBLING_PROFILE),
+            },
+            Mode::Strict => Self::Normalized {
+                profile: &LOCKED_WEBGL_PROFILE,
+                farbling: None,
+            },
         }
     }
 
-    /// `Some(profile)` iff the policy normalizes the readout (Strict).
-    /// `None` for Standard's native pass-through.
-    pub fn profile(&self) -> Option<&'static WebGlProfile> {
+    /// The WebGL profile this policy uses. Always
+    /// `&LOCKED_WEBGL_PROFILE` after the v1.23 refactor — both
+    /// modes share the cohort base.
+    pub fn profile(&self) -> &'static WebGlProfile {
         match self {
-            Self::NativePassThrough => None,
-            Self::NormalizedProfile(p) => Some(*p),
+            Self::Normalized { profile, .. } => profile,
         }
     }
 
-    /// `Some(&LOCKED_CANVAS_PROFILE)` iff the policy is Strict, so
-    /// the libxul `readPixels` interceptor can route through the
-    /// shared Module 27 rasterizer profile.
-    pub fn canvas_profile(&self) -> Option<&'static CanvasRenderProfile> {
-        self.profile().map(|p| p.canvas_profile)
+    /// The farbling profile this policy carries, if any.
+    pub fn farbling(&self) -> Option<&'static crate::farbling::FarblingProfile> {
+        match self {
+            Self::Normalized { farbling, .. } => *farbling,
+        }
+    }
+
+    /// The shared rasterizer profile the libxul `readPixels`
+    /// interceptor routes through. Returns the address-identical
+    /// `&LOCKED_CANVAS_PROFILE` (Module 27 cross-coupling).
+    pub fn canvas_profile(&self) -> &'static CanvasRenderProfile {
+        self.profile().canvas_profile
     }
 
     /// True iff the libxul WebGL hook will be activated for this
-    /// policy. Equivalent to `profile().is_some()`; offered as a
-    /// named predicate so call sites read naturally.
+    /// policy. After the v1.23 refactor this is `true` for both
+    /// modes.
     pub fn normalizes(&self) -> bool {
-        matches!(self, Self::NormalizedProfile(_))
+        matches!(self, Self::Normalized { .. })
     }
 }
 
@@ -420,17 +447,17 @@ impl WebGlOverride {
         self.policy
     }
 
-    /// `Some(&LOCKED_WEBGL_PROFILE)` iff the override is Strict.
-    /// Standard returns `None` — the libxul-side native parameter
-    /// readout stays in place.
-    pub fn profile(&self) -> Option<&'static WebGlProfile> {
+    /// The WebGL profile this override pins. Always
+    /// `&LOCKED_WEBGL_PROFILE` after the v1.23 refactor — both
+    /// modes share the cohort base. Strict vs Standard divergence
+    /// is on `policy().farbling()`.
+    pub fn profile(&self) -> &'static WebGlProfile {
         self.policy.profile()
     }
 
-    /// `Some(&LOCKED_CANVAS_PROFILE)` iff the override is Strict.
-    /// Routes the WebGL `readPixels` pathway through the shared
-    /// Module 27 rasterizer profile.
-    pub fn canvas_profile(&self) -> Option<&'static CanvasRenderProfile> {
+    /// The shared rasterizer profile the libxul `readPixels`
+    /// interceptor routes through (Module 27 cross-coupling).
+    pub fn canvas_profile(&self) -> &'static CanvasRenderProfile {
         self.policy.canvas_profile()
     }
 }
@@ -500,29 +527,46 @@ mod tests {
     }
 
     #[test]
-    fn standard_returns_native_pass_through() {
+    fn standard_resolves_to_cohort_base_with_farbling() {
+        // v1.23 amiunique-generic refactor: Standard now locks
+        // vendor / renderer / extension allowlist to the same
+        // cohort base as Strict (was: native pass-through),
+        // PLUS carries STANDARD_FARBLING_PROFILE for per-(origin,
+        // profile_id) ±1 noise on numeric MAX_* parameters.
         let p = WebGlReadbackPolicy::for_mode(Mode::Standard);
-        assert!(matches!(p, WebGlReadbackPolicy::NativePassThrough));
-        assert!(p.profile().is_none());
-        assert!(p.canvas_profile().is_none());
-        assert!(!p.normalizes());
+        assert!(matches!(p, WebGlReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_WEBGL_PROFILE));
+        assert!(std::ptr::eq(p.canvas_profile(), &LOCKED_CANVAS_PROFILE));
+        let f = p
+            .farbling()
+            .expect("Standard MUST carry a farbling profile");
+        assert!(std::ptr::eq(f, &crate::farbling::STANDARD_FARBLING_PROFILE));
+        assert!(p.normalizes());
     }
 
     #[test]
-    fn strict_returns_normalized_profile_with_locked_profile() {
+    fn strict_resolves_to_cohort_base_without_farbling() {
+        // v1.23: Strict shares the same cohort base (address
+        // identity) but carries farbling=None — pure cohort lock.
         let p = WebGlReadbackPolicy::for_mode(Mode::Strict);
-        assert!(matches!(p, WebGlReadbackPolicy::NormalizedProfile(_)));
-        let profile = p.profile().expect("Strict policy MUST carry a profile");
-        // Address identity: every Strict renderer reads the same
-        // singleton — that is the Strict-cohort guarantee.
-        assert!(std::ptr::eq(profile, &LOCKED_WEBGL_PROFILE));
-        // Cohort unification with Module 27 propagates through the
-        // policy accessor.
-        let canvas = p
-            .canvas_profile()
-            .expect("Strict MUST expose canvas_profile");
-        assert!(std::ptr::eq(canvas, &LOCKED_CANVAS_PROFILE));
+        assert!(matches!(p, WebGlReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_WEBGL_PROFILE));
+        assert!(std::ptr::eq(p.canvas_profile(), &LOCKED_CANVAS_PROFILE));
+        assert_eq!(p.farbling(), None);
         assert!(p.normalizes());
+    }
+
+    #[test]
+    fn standard_and_strict_share_webgl_cohort_base() {
+        // v1.23 cohort unification: WebGL profile + canvas_profile
+        // are address-identical across both modes.
+        let s = WebGlReadbackPolicy::for_mode(Mode::Standard);
+        let r = WebGlReadbackPolicy::for_mode(Mode::Strict);
+        assert!(std::ptr::eq(s.profile(), r.profile()));
+        assert!(std::ptr::eq(s.canvas_profile(), r.canvas_profile()));
+        // Modes diverge ONLY on farbling.
+        assert!(s.farbling().is_some());
+        assert!(r.farbling().is_none());
     }
 
     #[test]
@@ -627,18 +671,29 @@ mod tests {
     }
 
     #[test]
-    fn standard_override_has_no_profile_strict_does() {
+    fn both_overrides_carry_the_locked_profile_v1_23() {
+        // v1.23 refactor: both modes share LOCKED_WEBGL_PROFILE
+        // and LOCKED_CANVAS_PROFILE. Per-mode divergence is on
+        // policy().farbling().
         let standard = WebGlOverride::new(Mode::Standard);
         let strict = WebGlOverride::new(Mode::Strict);
-        assert!(standard.profile().is_none());
-        assert!(standard.canvas_profile().is_none());
+        assert!(std::ptr::eq(standard.profile(), &LOCKED_WEBGL_PROFILE));
+        assert!(std::ptr::eq(strict.profile(), &LOCKED_WEBGL_PROFILE));
+        assert!(std::ptr::eq(
+            standard.canvas_profile(),
+            &LOCKED_CANVAS_PROFILE
+        ));
+        assert!(std::ptr::eq(
+            strict.canvas_profile(),
+            &LOCKED_CANVAS_PROFILE
+        ));
+        assert!(standard.policy().farbling().is_some());
+        assert_eq!(strict.policy().farbling(), None);
 
-        let p = strict.profile().expect("Strict MUST carry a profile");
+        let p = strict.profile();
         assert!(std::ptr::eq(p, &LOCKED_WEBGL_PROFILE));
 
-        let c = strict
-            .canvas_profile()
-            .expect("Strict MUST carry a canvas_profile");
+        let c = strict.canvas_profile();
         assert!(std::ptr::eq(c, &LOCKED_CANVAS_PROFILE));
     }
 
@@ -731,14 +786,19 @@ mod tests {
         // silently treated as native pass-through.
         fn arm(p: WebGlReadbackPolicy) -> &'static str {
             match p {
-                WebGlReadbackPolicy::NativePassThrough => "native",
-                WebGlReadbackPolicy::NormalizedProfile(_) => "normalized",
+                WebGlReadbackPolicy::Normalized { farbling: None, .. } => "cohort-locked",
+                WebGlReadbackPolicy::Normalized {
+                    farbling: Some(_), ..
+                } => "cohort-locked-farbled",
             }
         }
-        assert_eq!(arm(WebGlReadbackPolicy::for_mode(Mode::Standard)), "native");
+        assert_eq!(
+            arm(WebGlReadbackPolicy::for_mode(Mode::Standard)),
+            "cohort-locked-farbled",
+        );
         assert_eq!(
             arm(WebGlReadbackPolicy::for_mode(Mode::Strict)),
-            "normalized"
+            "cohort-locked",
         );
     }
 }

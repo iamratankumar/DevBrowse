@@ -66,19 +66,22 @@
 //!     modes; the policy carries the per-Mode profile choice.
 //!
 //! It IS NOT:
-//!   * The actual JS-side rounding. Module 1 (libxul tag) patches
-//!     `nsRFPService::ReduceTimePrecisionAsMSecs` (or its
-//!     equivalent in the current libxul tag) to call into
+//!   * The actual JS-side rounding. The libxul build (workspace-
+//!     level Cargo pin; wired into Gecko by pb-browser at Phase 11 /
+//!     Module 80) patches `nsRFPService::ReduceTimePrecisionAsMSecs`
+//!     (or its equivalent in the current libxul tag) to call into
 //!     `TimerProfile::quantize_js_ns`. This module pins the
-//!     contract.
+//!     contract. (Not "Module 1" — that module ships only the
+//!     workspace + toolchain pin.)
 //!   * The Phase 5.5 Module 35.2 L41-enforcement layer that asserts
 //!     no settings path can loosen the Strict 100 ms quantum
 //!     (including a hostile pb-config write or a recovered backup
 //!     with a tampered config blob). Module 32 ships the per-Mode
 //!     floor; Module 35.2 ships the lock.
 //
-// TODO(Module 1 / libxul): the clock interceptor lands alongside
-//   the libxul tag. Wire `nsRFPService::ReduceTimePrecisionAsMSecs`
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the clock interceptor lands
+//   alongside the libxul tag. Wire `nsRFPService::ReduceTimePrecisionAsMSecs`
 //   (and the analogous nanosecond-precision entry points the
 //   current libxul tag exposes) to call into
 //   `TimerProfile::quantize_js_ns` for the renderer's current Mode.
@@ -99,14 +102,14 @@
 //   covered by `TimerSurface::RequestAnimationFrameTimestamp`
 //   here; Module 35.2 layers the L43-mandated bounded async jitter
 //   on top).
-// TODO(Module 29 / audio + Module 30 / fonts cross-coupling): the
-//   audio.rs / fonts.rs modules reference Module 32's timer
-//   quantization for two specific cases: (a) `performance.now()`
-//   reads during `OfflineAudioContext` rendering (Module 29 pins
-//   only the audio buffer values; the timer reads go through
-//   Module 32); (b) `FontFaceSet.ready` callback latency (Module
-//   30 flagged this as needing latency quantization; Strict's
-//   100 ms floor absorbs sub-100ms enumeration deltas, Standard
+// Module 29 (audio) + Module 30 (fonts) cross-coupling has shipped:
+//   audio.rs / fonts.rs reference Module 32's timer quantization for
+//   two specific cases: (a) `performance.now()` reads during
+//   `OfflineAudioContext` rendering (Module 29 pins only the audio
+//   buffer values; the timer reads go through Module 32); (b)
+//   `FontFaceSet.ready` callback latency (Module 30 flagged this as
+//   needing latency quantization; Strict's 100 ms floor absorbs
+//   sub-100ms enumeration deltas, Standard
 //   inherits the 1 ms floor which is below the enumeration-count
 //   delta and would require an additional per-callback quantizer
 //   from a future module).
@@ -162,10 +165,94 @@ impl TimerProfile {
         (now_ns / self.js_quantum_ns) * self.js_quantum_ns
     }
 
+    /// Floor-round a `DOMHighResTimeStamp` (`f64` milliseconds) to
+    /// the JS quantum. Single source of truth for ms-form sites
+    /// (libxul JS-facing call sites); delegates to
+    /// [`quantize_js_ns`](Self::quantize_js_ns) so the two surfaces
+    /// agree by construction. Phase 5.5 Module 35.2 consumes this
+    /// for the async-event arrival bound (`bound_async_arrival`'s
+    /// FIRE-pathway equals this clock-READ pathway, so a clock read
+    /// inside a fired callback returns the same value as the bounded
+    /// arrival — closing the (arrival, now()) side channel).
+    ///
+    /// `t_ms` must be a non-negative finite `f64`; the libxul side
+    /// feeds monotonic ms-since-time-origin. Debug builds assert;
+    /// release builds clamp to `0.0` rather than propagating garbage
+    /// out the FFI boundary.
+    pub fn quantize_js_ms(&self, t_ms: f64) -> f64 {
+        debug_assert!(
+            t_ms.is_finite() && t_ms >= 0.0,
+            "quantize_js_ms expects non-negative finite t_ms",
+        );
+        if !(t_ms.is_finite() && t_ms >= 0.0) {
+            return 0.0;
+        }
+        let t_ns = (t_ms * 1_000_000.0) as u64;
+        (self.quantize_js_ns(t_ns) as f64) / 1_000_000.0
+    }
+
     /// Floor-round a nanosecond timestamp to the GPU quantum.
     /// Documentation-only helper; pb-gpu does its own rounding.
     pub fn quantize_gpu_ns(&self, now_ns: u64) -> u64 {
         (now_ns / self.gpu_quantum_ns) * self.gpu_quantum_ns
+    }
+
+    /// Floor-round + jitter a nanosecond timestamp (P1-3, 2026-05-22).
+    ///
+    /// Adds a deterministic per-quantum jitter offset in the range
+    /// `[0, js_quantum_ns)` derived from the `seed` so the same
+    /// `(quantized bucket, seed)` always produces the same jittered
+    /// reading. Defeats Tor-style statistical de-jittering attacks
+    /// where an adversary averages many clock reads to recover the
+    /// sub-quantum delta — the per-bucket jitter is constant so
+    /// averaging yields no information beyond the quantized value
+    /// plus a per-(partition, bucket) offset that does not vary
+    /// with the underlying clock.
+    ///
+    /// **Monotonicity contract preserved:** two reads in the same
+    /// quantum bucket return the same jittered value (jitter is a
+    /// pure function of the bucket index). Two reads in adjacent
+    /// buckets advance by `js_quantum_ns - old_jitter + new_jitter`
+    /// which is always `> 0` because `new_jitter < js_quantum_ns`.
+    ///
+    /// **Same-microtask correlation preserved:** the floor-rounding
+    /// is the dominant term; jitter is a deterministic per-bucket
+    /// offset. Two clock reads in the same microtask map to the
+    /// same bucket → same jittered value (matches the existing
+    /// `quantize_js_ns` contract).
+    ///
+    /// `seed` is the partition-derived jitter seed; pass
+    /// `partition_key.jitter_seed()` from the orchestrator (Phase
+    /// 11). For untested / no-jitter contexts pass `seed = 0`
+    /// which collapses the jitter offset to 0 (equivalent to
+    /// `quantize_js_ns`).
+    pub fn quantize_js_ns_with_jitter(&self, now_ns: u64, seed: u64) -> u64 {
+        let bucket = now_ns / self.js_quantum_ns;
+        let quantized = bucket * self.js_quantum_ns;
+        if seed == 0 {
+            return quantized;
+        }
+        // Per-bucket deterministic jitter: SplitMix64 over (seed,
+        // bucket). Reduces to `[0, js_quantum_ns)`.
+        let mut z = seed.wrapping_add(bucket).wrapping_mul(0x9E3779B97F4A7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^= z >> 31;
+        let jitter = z % self.js_quantum_ns;
+        quantized.saturating_add(jitter)
+    }
+
+    /// Floor-round + jitter ms-form (mirrors `quantize_js_ms`).
+    pub fn quantize_js_ms_with_jitter(&self, t_ms: f64, seed: u64) -> f64 {
+        debug_assert!(
+            t_ms.is_finite() && t_ms >= 0.0,
+            "quantize_js_ms_with_jitter expects non-negative finite t_ms",
+        );
+        if !(t_ms.is_finite() && t_ms >= 0.0) {
+            return 0.0;
+        }
+        let t_ns = (t_ms * 1_000_000.0) as u64;
+        (self.quantize_js_ns_with_jitter(t_ns, seed) as f64) / 1_000_000.0
     }
 }
 
@@ -281,6 +368,15 @@ pub enum TimerSurface {
     /// touch events are particularly leaky because rapid sequences
     /// expose sub-quantum inter-event deltas.
     EventTimeStamp,
+    /// `IdleDeadline.timeRemaining()` — the residual-time argument
+    /// of a `requestIdleCallback(cb)` callback. Returns a
+    /// `DOMHighResTimeStamp` and is otherwise a fully-functional
+    /// high-resolution clock surface inside the idle callback. The
+    /// libxul bridge MUST floor-round its return value through the
+    /// JS quantum or sites probe the real clock here. Phase 5.5
+    /// Module 35.2 added this variant alongside the
+    /// `RequestIdleCallback` async-fire scheduling surface.
+    IdleDeadlineTimeRemaining,
 }
 
 impl TimerSurface {
@@ -295,6 +391,7 @@ impl TimerSurface {
         Self::PerformanceObserverEntry,
         Self::RequestAnimationFrameTimestamp,
         Self::EventTimeStamp,
+        Self::IdleDeadlineTimeRemaining,
     ];
 }
 
@@ -446,6 +543,144 @@ mod tests {
     }
 
     #[test]
+    fn quantize_js_ms_floors_to_quantum_for_both_modes() {
+        // Phase 5.5 Module 35.2 consumes this surface; the ms form
+        // MUST agree with the ns form by construction (single source
+        // of truth for the floor-rounding mechanism).
+        let s = &STANDARD_TIMER_PROFILE;
+        let r = &STRICT_TIMER_PROFILE;
+        // Standard 1 ms
+        assert_eq!(s.quantize_js_ms(0.0), 0.0);
+        assert_eq!(s.quantize_js_ms(0.7), 0.0);
+        assert_eq!(s.quantize_js_ms(1.0), 1.0);
+        assert_eq!(s.quantize_js_ms(1.5), 1.0);
+        assert_eq!(s.quantize_js_ms(137.42), 137.0);
+        // Strict 100 ms
+        assert_eq!(r.quantize_js_ms(0.0), 0.0);
+        assert_eq!(r.quantize_js_ms(99.999), 0.0);
+        assert_eq!(r.quantize_js_ms(100.0), 100.0);
+        assert_eq!(r.quantize_js_ms(137.42), 100.0);
+        assert_eq!(r.quantize_js_ms(550.0), 500.0);
+    }
+
+    #[test]
+    fn quantize_js_ms_agrees_with_quantize_js_ns_by_construction() {
+        // Composition lock: the ms form delegates to the ns form,
+        // so a future change to the ns-form floor mechanism
+        // automatically flows through. This test pins the relation
+        // in case the delegation is accidentally inlined or
+        // re-implemented.
+        for profile in [&STANDARD_TIMER_PROFILE, &STRICT_TIMER_PROFILE] {
+            for &t_ms in &[0.0_f64, 0.5, 1.5, 50.0, 99.999, 137.42, 200.0, 999.999] {
+                let from_ms = profile.quantize_js_ms(t_ms);
+                let t_ns = (t_ms * 1_000_000.0) as u64;
+                let from_ns_in_ms = (profile.quantize_js_ns(t_ns) as f64) / 1_000_000.0;
+                assert!(
+                    (from_ms - from_ns_in_ms).abs() < 1e-9,
+                    "ms vs ns disagree for profile={} t_ms={}",
+                    profile.label,
+                    t_ms,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quantize_js_ms_clamps_non_finite_input_in_release() {
+        // Release fall-through clamps NaN / negative / Infinity to
+        // 0.0 rather than propagating garbage out the FFI boundary.
+        // Debug builds trip the debug_assert before reaching here.
+        if !cfg!(debug_assertions) {
+            assert_eq!(STRICT_TIMER_PROFILE.quantize_js_ms(f64::NAN), 0.0);
+            assert_eq!(STRICT_TIMER_PROFILE.quantize_js_ms(-1.0), 0.0);
+            assert_eq!(STRICT_TIMER_PROFILE.quantize_js_ms(f64::INFINITY), 0.0);
+        }
+    }
+
+    #[test]
+    fn quantize_with_jitter_seed_zero_collapses_to_no_jitter() {
+        // seed = 0 sentinel: jittered output MUST equal plain
+        // floor-rounding. Backward-compat for call sites that
+        // haven't been wired to the jitter seed yet.
+        let s = &STRICT_TIMER_PROFILE;
+        for t in [0_u64, 1, 99_999_999, 100_000_001, 1_234_567_890] {
+            assert_eq!(s.quantize_js_ns_with_jitter(t, 0), s.quantize_js_ns(t));
+        }
+    }
+
+    #[test]
+    fn quantize_with_jitter_preserves_monotonicity() {
+        // Same seed, ascending input: output MUST be non-
+        // decreasing. The jitter offset is a per-bucket constant
+        // (`< js_quantum_ns`), so bucket transition advances by
+        // `js_quantum_ns - old_jitter + new_jitter > 0`.
+        let s = &STRICT_TIMER_PROFILE;
+        let seed: u64 = 0xDEAD_BEEF_CAFE_F00D;
+        let mut last = 0_u64;
+        for t in (0..2_000_000_000_u64).step_by(7_654_321) {
+            let q = s.quantize_js_ns_with_jitter(t, seed);
+            assert!(q >= last, "monotonicity broken: prev={} cur={}", last, q);
+            last = q;
+        }
+    }
+
+    #[test]
+    fn quantize_with_jitter_same_bucket_same_value() {
+        // Two reads within the same quantum bucket (same `seed`)
+        // MUST return the same jittered value — preserves the
+        // same-microtask correlation invariant.
+        let s = &STRICT_TIMER_PROFILE;
+        let seed: u64 = 0x1234_5678;
+        let bucket_start: u64 = 5 * s.js_quantum_ns;
+        for delta in [0_u64, 1, 1_000, s.js_quantum_ns - 1] {
+            let q = s.quantize_js_ns_with_jitter(bucket_start + delta, seed);
+            assert_eq!(
+                q,
+                s.quantize_js_ns_with_jitter(bucket_start, seed),
+                "same-bucket reads should agree; delta={}",
+                delta,
+            );
+        }
+    }
+
+    #[test]
+    fn quantize_with_jitter_different_seeds_diverge() {
+        // Same input, different seeds: jitter offsets MUST differ
+        // for most bucket / seed pairs. Sample 100 buckets and
+        // assert most disagree.
+        let s = &STRICT_TIMER_PROFILE;
+        let mut disagree = 0;
+        for bucket in 0..100_u64 {
+            let t = bucket * s.js_quantum_ns + 42;
+            let a = s.quantize_js_ns_with_jitter(t, 0xAAAA_BBBB);
+            let b = s.quantize_js_ns_with_jitter(t, 0xCCCC_DDDD);
+            if a != b {
+                disagree += 1;
+            }
+        }
+        assert!(
+            disagree > 80,
+            "different seeds should produce different per-bucket jitter for most buckets; \
+             saw only {}/100 disagreement",
+            disagree,
+        );
+    }
+
+    #[test]
+    fn quantize_with_jitter_stays_within_quantum() {
+        // Jittered output - quantized output MUST be in
+        // `[0, js_quantum_ns)`. Verifies the modulo bound holds.
+        let s = &STRICT_TIMER_PROFILE;
+        let seed: u64 = 0xFEED_FACE_DEAD_BEEF;
+        for t in (0..1_000_000_000_u64).step_by(123_456) {
+            let plain = s.quantize_js_ns(t);
+            let jittered = s.quantize_js_ns_with_jitter(t, seed);
+            assert!(jittered >= plain);
+            assert!(jittered < plain + s.js_quantum_ns);
+        }
+    }
+
+    #[test]
     fn quantize_gpu_ns_floors_to_gpu_quantum() {
         let s = &STANDARD_TIMER_PROFILE;
         // 2 ms = 2_000_000 ns
@@ -470,7 +705,10 @@ mod tests {
         // performance.now / timeOrigin / performance.timing) and
         // the event / rAF timestamps that route through the same
         // clock.
-        assert_eq!(TimerSurface::ALL.len(), 7);
+        // Phase 5.5 Module 35.2 added IdleDeadlineTimeRemaining
+        // (the `IdleDeadline.timeRemaining()` clock surface inside
+        // a requestIdleCallback callback).
+        assert_eq!(TimerSurface::ALL.len(), 8);
         for v in [
             TimerSurface::DateNow,
             TimerSurface::PerformanceNow,
@@ -479,6 +717,7 @@ mod tests {
             TimerSurface::PerformanceObserverEntry,
             TimerSurface::RequestAnimationFrameTimestamp,
             TimerSurface::EventTimeStamp,
+            TimerSurface::IdleDeadlineTimeRemaining,
         ] {
             assert!(TimerSurface::ALL.contains(&v), "missing surface: {:?}", v);
         }
@@ -553,6 +792,7 @@ mod tests {
                 TimerSurface::PerformanceObserverEntry => "performance-observer-entry",
                 TimerSurface::RequestAnimationFrameTimestamp => "request-animation-frame-timestamp",
                 TimerSurface::EventTimeStamp => "event-time-stamp",
+                TimerSurface::IdleDeadlineTimeRemaining => "idle-deadline-time-remaining",
             }
         }
         for s in TimerSurface::ALL {

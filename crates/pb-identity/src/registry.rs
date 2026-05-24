@@ -20,9 +20,12 @@
 //! pb-config already owns the permission helpers; we reuse them via
 //! `pb_config::permissions` rather than duplicating the logic.
 //!
-//! TODO(Module 27 / 82): registry path itself is non-secret, but the file
-//!   contents (profile names) ARE secret per L27. Never log the path's
-//!   contents; only log the path string.
+//! TODO(L27 forensic-redaction invariant + Module 82 crash containment,
+//!   Phase 11): registry path itself is non-secret, but the file contents
+//!   (profile names) ARE secret per L27. Never log the path's contents;
+//!   only log the path string. (Original wording "Module 27 / 82"
+//!   conflated L27 — the architecture invariant — with Module 27 which
+//!   is Canvas readback normalization; corrected on 2026-05-21.)
 
 use crate::profile::{IdentityProfile, MAX_NAME_LEN};
 use serde::{Deserialize, Serialize};

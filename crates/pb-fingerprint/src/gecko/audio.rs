@@ -64,9 +64,11 @@
 //! would have to add a variant here and trip the exhaustive-match
 //! contract in libxul. Booleans would silently absorb the shift.
 //
-// TODO(Module 1 / libxul): the deterministic compressor + scalar-
-//   reference DSP path is a Gecko-side change that lands alongside
-//   the libxul tag. `AudioOverride::install` currently has no side
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the deterministic compressor
+//   + scalar-reference DSP path is a Gecko-side change that lands
+//   alongside the libxul tag. `AudioOverride::install` currently
+//   has no side
 //   effects because the FFI hook is not yet live; once libxul is
 //   wired, Strict-mode install() will register a per-renderer
 //   callback that returns `&LOCKED_AUDIO_PROFILE` on demand, and
@@ -182,53 +184,72 @@ pub static LOCKED_AUDIO_PROFILE: AudioProfile = AudioProfile {
 
 // ── Per-mode readback policy ──────────────────────────────────────────────
 
-/// Per-mode audio readback policy. Strict pins the DSP path to
-/// `LOCKED_AUDIO_PROFILE`; Standard leaves the native Gecko audio
-/// pipeline in place.
+/// Per-mode audio readback policy.
 ///
-/// Mode-divergence is intentional: a user choosing Standard accepts
-/// a different cohort than Strict. Same shape as Module 25
-/// `WebRtcPolicy`, Module 27 `CanvasReadbackPolicy`, Module 28
-/// `WebGlReadbackPolicy`.
+/// **v1.23 amiunique-generic refactor (Phase 5.5 Module 35.5):**
+/// both modes resolve to the same `Normalized` variant carrying
+/// `LOCKED_AUDIO_PROFILE`. Standard now activates the cohort-locked
+/// DSP path (`CompressorImpl::CohortLocked` +
+/// `DspPath::ScalarReference`) AND adds per-(origin,
+/// IdentityProfile) ±1e-5 noise on `Float32Array` sample readback.
+/// Strict keeps the pure cohort lock (`farbling: None`).
+///
+/// Supersedes the v1.14 `NativePassThrough` / `NormalizedProfile`
+/// two-variant shape. Standard no longer pass-throughs; the
+/// locked compressor + scalar DSP path now applies to both modes.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AudioReadbackPolicy {
-    /// Standard: native Gecko DSP path; no DevBrowse-side
-    /// normalization. The override registers but `install` is a
-    /// no-op so the libxul audio pipeline is untouched.
-    NativePassThrough,
-    /// Strict: the libxul audio hook produces deterministic
-    /// post-render buffers using the referenced profile. Every
-    /// Strict DevBrowse user in the cohort sees identical readback
-    /// for identical inputs.
-    NormalizedProfile(&'static AudioProfile),
+    /// Audio readback flows through the libxul hook producing
+    /// deterministic post-render buffers using `profile`. When
+    /// `farbling.is_some()`, the per-sample ±eps noise from
+    /// `farbling` is applied to `Float32Array` readback paths
+    /// (the un-farbled samples drive actual audio playback;
+    /// only the JS-readback view carries noise).
+    Normalized {
+        profile: &'static AudioProfile,
+        farbling: Option<&'static crate::farbling::FarblingProfile>,
+    },
 }
 
 impl AudioReadbackPolicy {
-    /// Locked snapshot for `mode`:
-    ///   * `Mode::Standard` -> `NativePassThrough`
-    ///   * `Mode::Strict`   -> `NormalizedProfile(&LOCKED_AUDIO_PROFILE)`
+    /// Locked snapshot for `mode` (v1.23):
+    ///   * `Mode::Standard` -> `Normalized { profile: &LOCKED_AUDIO_PROFILE, farbling: Some(&STANDARD_FARBLING_PROFILE) }`
+    ///   * `Mode::Strict`   -> `Normalized { profile: &LOCKED_AUDIO_PROFILE, farbling: None }`
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
-            Mode::Standard => Self::NativePassThrough,
-            Mode::Strict => Self::NormalizedProfile(&LOCKED_AUDIO_PROFILE),
+            Mode::Standard => Self::Normalized {
+                profile: &LOCKED_AUDIO_PROFILE,
+                farbling: Some(&crate::farbling::STANDARD_FARBLING_PROFILE),
+            },
+            Mode::Strict => Self::Normalized {
+                profile: &LOCKED_AUDIO_PROFILE,
+                farbling: None,
+            },
         }
     }
 
-    /// `Some(profile)` iff the policy normalizes readback (Strict).
-    /// `None` for Standard's native pass-through.
-    pub fn profile(&self) -> Option<&'static AudioProfile> {
+    /// The audio profile this policy uses. Always
+    /// `&LOCKED_AUDIO_PROFILE` after the v1.23 refactor — both
+    /// modes share the cohort base.
+    pub fn profile(&self) -> &'static AudioProfile {
         match self {
-            Self::NativePassThrough => None,
-            Self::NormalizedProfile(p) => Some(*p),
+            Self::Normalized { profile, .. } => profile,
+        }
+    }
+
+    /// The farbling profile this policy carries, if any.
+    pub fn farbling(&self) -> Option<&'static crate::farbling::FarblingProfile> {
+        match self {
+            Self::Normalized { farbling, .. } => *farbling,
         }
     }
 
     /// True iff the libxul audio hook will be activated for this
-    /// policy. Equivalent to `profile().is_some()`; offered as a
-    /// named predicate so call sites read naturally.
+    /// policy. After the v1.23 refactor this is `true` for both
+    /// modes.
     pub fn normalizes(&self) -> bool {
-        matches!(self, Self::NormalizedProfile(_))
+        matches!(self, Self::Normalized { .. })
     }
 }
 
@@ -326,10 +347,11 @@ impl AudioOverride {
         self.policy
     }
 
-    /// `Some(&LOCKED_AUDIO_PROFILE)` iff the override is Strict.
-    /// Standard returns `None` — the libxul-side native DSP path
-    /// stays in place.
-    pub fn profile(&self) -> Option<&'static AudioProfile> {
+    /// The audio profile this override pins. Always
+    /// `&LOCKED_AUDIO_PROFILE` after the v1.23 amiunique-generic
+    /// refactor — both modes share the cohort-locked DSP path.
+    /// Strict and Standard diverge only on `policy().farbling()`.
+    pub fn profile(&self) -> &'static AudioProfile {
         self.policy.profile()
     }
 }
@@ -396,22 +418,42 @@ mod tests {
     }
 
     #[test]
-    fn standard_returns_native_pass_through() {
+    fn standard_resolves_to_cohort_base_with_farbling() {
+        // v1.23 amiunique-generic refactor: Standard now activates
+        // the cohort-locked DSP path AND carries
+        // STANDARD_FARBLING_PROFILE for per-sample ±1e-5 noise on
+        // Float32Array readback.
         let p = AudioReadbackPolicy::for_mode(Mode::Standard);
-        assert!(matches!(p, AudioReadbackPolicy::NativePassThrough));
-        assert_eq!(p.profile(), None);
-        assert!(!p.normalizes());
+        assert!(matches!(p, AudioReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_AUDIO_PROFILE));
+        let f = p
+            .farbling()
+            .expect("Standard MUST carry a farbling profile");
+        assert!(std::ptr::eq(f, &crate::farbling::STANDARD_FARBLING_PROFILE));
+        assert!(p.normalizes());
     }
 
     #[test]
-    fn strict_returns_normalized_profile_with_locked_profile() {
+    fn strict_resolves_to_cohort_base_without_farbling() {
+        // v1.23: Strict shares the same cohort base but carries
+        // farbling=None — pure cohort lock.
         let p = AudioReadbackPolicy::for_mode(Mode::Strict);
-        assert!(matches!(p, AudioReadbackPolicy::NormalizedProfile(_)));
-        let profile = p.profile().expect("Strict policy MUST carry a profile");
-        // Address identity: every Strict renderer reads the same
-        // singleton — that is the Strict-cohort guarantee.
-        assert!(std::ptr::eq(profile, &LOCKED_AUDIO_PROFILE));
+        assert!(matches!(p, AudioReadbackPolicy::Normalized { .. }));
+        assert!(std::ptr::eq(p.profile(), &LOCKED_AUDIO_PROFILE));
+        assert_eq!(p.farbling(), None);
         assert!(p.normalizes());
+    }
+
+    #[test]
+    fn standard_and_strict_share_audio_cohort_base() {
+        // v1.23 cohort unification: audio profile is the exact
+        // same static in both modes (address identity).
+        let s = AudioReadbackPolicy::for_mode(Mode::Standard);
+        let r = AudioReadbackPolicy::for_mode(Mode::Strict);
+        assert!(std::ptr::eq(s.profile(), r.profile()));
+        // Modes diverge ONLY on farbling.
+        assert!(s.farbling().is_some());
+        assert!(r.farbling().is_none());
     }
 
     #[test]
@@ -457,12 +499,15 @@ mod tests {
     }
 
     #[test]
-    fn standard_override_has_no_profile_strict_does() {
+    fn both_overrides_carry_the_locked_profile_v1_23() {
+        // v1.23 refactor: both modes share LOCKED_AUDIO_PROFILE.
+        // Per-mode divergence is on policy().farbling().
         let standard = AudioOverride::new(Mode::Standard);
         let strict = AudioOverride::new(Mode::Strict);
-        assert_eq!(standard.profile(), None);
-        let p = strict.profile().expect("Strict MUST carry a profile");
-        assert!(std::ptr::eq(p, &LOCKED_AUDIO_PROFILE));
+        assert!(std::ptr::eq(standard.profile(), &LOCKED_AUDIO_PROFILE));
+        assert!(std::ptr::eq(strict.profile(), &LOCKED_AUDIO_PROFILE));
+        assert!(standard.policy().farbling().is_some());
+        assert_eq!(strict.policy().farbling(), None);
     }
 
     #[test]
@@ -529,14 +574,19 @@ mod tests {
         // treated as native pass-through.
         fn arm(p: AudioReadbackPolicy) -> &'static str {
             match p {
-                AudioReadbackPolicy::NativePassThrough => "native",
-                AudioReadbackPolicy::NormalizedProfile(_) => "normalized",
+                AudioReadbackPolicy::Normalized { farbling: None, .. } => "cohort-locked",
+                AudioReadbackPolicy::Normalized {
+                    farbling: Some(_), ..
+                } => "cohort-locked-farbled",
             }
         }
-        assert_eq!(arm(AudioReadbackPolicy::for_mode(Mode::Standard)), "native");
+        assert_eq!(
+            arm(AudioReadbackPolicy::for_mode(Mode::Standard)),
+            "cohort-locked-farbled",
+        );
         assert_eq!(
             arm(AudioReadbackPolicy::for_mode(Mode::Strict)),
-            "normalized"
+            "cohort-locked",
         );
     }
 

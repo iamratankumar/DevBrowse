@@ -47,17 +47,21 @@
 //!     no-op pending the libxul WebIDL accessor removal.
 //!
 //! It IS NOT:
-//!   * The actual WebIDL accessor removal. Module 1 (libxul tag)
-//!     compiles libxul with `dom.battery.enabled = false` and patches
-//!     `Navigator.webidl` so `getBattery` does not exist on the
-//!     prototype. This module pins the contract; libxul honors it.
+//!   * The actual WebIDL accessor removal. The libxul build
+//!     (workspace-level Cargo pin; wired into Gecko prototypes by
+//!     pb-browser at Phase 11 / Module 80) compiles libxul with
+//!     `dom.battery.enabled = false` and patches `Navigator.webidl`
+//!     so `getBattery` does not exist on the prototype. This module
+//!     pins the contract; libxul honors it. (Not "Module 1" — that
+//!     module ships only the workspace + toolchain pin.)
 //!   * A permission-gated re-enable path. There is none. Unlike
 //!     Module 30 fonts (per-site `FontsGrants` opt-in for Standard),
 //!     Battery has no `BatteryGrants` trait — the API stays removed
 //!     regardless of any settings or site grant.
 //
-// TODO(Module 1 / libxul): the WebIDL accessor removal lands
-//   alongside the libxul tag. Configuration knobs:
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the WebIDL accessor removal
+//   lands alongside the libxul tag. Configuration knobs:
 //   - `dom.battery.enabled = false` in the build-time prefs.
 //   - `Navigator.webidl` patched to drop the `getBattery()` operation
 //     (so `'getBattery' in navigator === false`, not just

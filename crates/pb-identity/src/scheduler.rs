@@ -17,7 +17,8 @@
 //! Concurrency: plain sync struct. Module 9 wraps it under
 //! `Arc<tokio::sync::Mutex>` at the integration boundary.
 //!
-//! TODO(Module 12): sandbox profile selection happens at lifecycle's spawn
+//! TODO(Module 12 type shipped; profile selection at pb-browser Phase 11 /
+//!   Module 80): sandbox profile selection happens at lifecycle's spawn
 //!   step, keyed off `IdentityProfile.mode()`. Scheduler does not touch
 //!   sandbox state, but its decision determines whether a fresh sandbox is
 //!   needed (always for Strict, only for new Standard renderers).

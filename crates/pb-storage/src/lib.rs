@@ -16,7 +16,8 @@ pub mod strict_wipe;
 
 pub use gatekeeper::{Gatekeeper, GatekeeperError, StorageRequest};
 pub use partition_key::{
-    derive as derive_partition_key, PartitionKey, PARTITION_KEY_DOMAIN, PARTITION_KEY_LEN,
+    derive as derive_partition_key, PartitionKey, FARBLING_SEED_DOMAIN, FARBLING_SEED_LEN,
+    PARTITION_KEY_DOMAIN, PARTITION_KEY_LEN,
 };
 pub use primitives::cache::{Cache, CacheEntry};
 pub use primitives::cookies::{CookieRecord, Cookies, SameSite};

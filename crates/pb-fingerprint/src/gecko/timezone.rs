@@ -73,8 +73,9 @@
 //!     defaults. Those are Module 34 (Navigator) territory; this
 //!     module pins only the timezone surface.
 //
-// TODO(Module 1 / libxul): the timezone accessor lives at
-//   `mozilla::intl::TimeZone` (or the analogous nsRFPService entry
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the timezone accessor lives
+//   at `mozilla::intl::TimeZone` (or the analogous nsRFPService entry
 //   point on the current libxul tag). Wire it to consult
 //   `TimezoneOverride::profile()` so Strict-mode renderers always
 //   answer with `LOCKED_TIMEZONE_PROFILE`. Standard renderers
@@ -260,6 +261,21 @@ pub static COMMON_TIMEZONES: &[&TimezoneProfile] = &[
     &AUSTRALIA_SYDNEY,
 ];
 
+/// `true` iff `tz` is one of the curated `COMMON_TIMEZONES`
+/// entries by **address identity** (`std::ptr::eq`). Value
+/// equality is intentionally NOT used — two `TimezoneProfile`s
+/// with identical fields at different addresses are still
+/// out-of-cohort.
+///
+/// Hardens `TimezonePolicy::for_mode_with_user_selection` against
+/// hostile callers passing a `&'static TimezoneProfile` outside
+/// the curated cohort list (P0-4, 2026-05-22).
+pub fn is_in_common_timezones(tz: &'static TimezoneProfile) -> bool {
+    COMMON_TIMEZONES
+        .iter()
+        .any(|entry| std::ptr::eq(*entry, tz))
+}
+
 // ── Per-mode policy ───────────────────────────────────────────────────────
 
 /// Per-mode timezone policy.
@@ -307,20 +323,40 @@ impl TimezonePolicy {
     /// User-configurable variant. The caller (future pb-identity)
     /// passes the user's selection from `COMMON_TIMEZONES`.
     ///
-    ///   * `Mode::Standard, Some(tz)` -> `UserConfigured(tz)`
+    ///   * `Mode::Standard, Some(tz)` -> `UserConfigured(tz)` iff
+    ///     `tz` is in `COMMON_TIMEZONES` by address identity; ELSE
+    ///     `NativePassThrough` (rejected selection is treated as
+    ///     "no selection").
     ///   * `Mode::Standard, None`     -> `NativePassThrough`
     ///   * `Mode::Strict, _`          -> `NormalizedUtc(&LOCKED_TIMEZONE_PROFILE)`
     ///     **regardless of the supplied selection** (L41).
     ///
     /// The Strict-ignores-selection behavior is the L41 enforcement;
     /// asserted by `tests::strict_ignores_user_timezone_selection`.
+    ///
+    /// **Validation against `COMMON_TIMEZONES` (P0-4, 2026-05-22):**
+    /// arbitrary `&'static TimezoneProfile` references outside the
+    /// curated `COMMON_TIMEZONES` list are rejected by falling back
+    /// to `NativePassThrough`. Rationale: the curated list is the
+    /// cohort surface; admitting any `&'static` would let a
+    /// hostile caller widen the cohort by injecting a profile not
+    /// in the analyzed-cohort set. Validation uses `std::ptr::eq`
+    /// against each `COMMON_TIMEZONES` entry — pure address-
+    /// identity, no value comparison.
     pub fn for_mode_with_user_selection(
         mode: Mode,
         user_tz: Option<&'static TimezoneProfile>,
     ) -> Self {
         match (mode, user_tz) {
             (Mode::Strict, _) => Self::NormalizedUtc(&LOCKED_TIMEZONE_PROFILE),
-            (Mode::Standard, Some(tz)) => Self::UserConfigured(tz),
+            (Mode::Standard, Some(tz)) if is_in_common_timezones(tz) => Self::UserConfigured(tz),
+            (Mode::Standard, Some(_)) => {
+                // Rejected: selection not in the curated cohort
+                // list. Fall back to host TZ pass-through rather
+                // than honor an out-of-cohort value that would
+                // split the cohort surface.
+                Self::NativePassThrough
+            }
             (Mode::Standard, None) => Self::NativePassThrough,
         }
     }
@@ -423,10 +459,18 @@ impl TimezoneOverride {
         }
     }
 
-    /// Construct with an explicit user-selected timezone (Standard
-    /// only; Strict ignores the selection per L41 and returns the
-    /// locked UTC profile).
-    pub fn with_user_selection(mode: Mode, user_tz: Option<&'static TimezoneProfile>) -> Self {
+    /// Construct with an explicit Standard-mode user-selected
+    /// timezone. Strict ignores the selection per L41 and returns
+    /// the locked UTC profile structurally; the selection is only
+    /// honored under `Mode::Standard`.
+    ///
+    /// Renamed from `with_user_selection` (2026-05-22) to avoid the
+    /// `with_user_*` constructor naming pattern that the L41 lock
+    /// documentation reserves for "user can override Strict" —
+    /// which this method does NOT do. The Strict branch ignores
+    /// `user_tz` by construction; the rename clarifies the
+    /// contract without changing behavior.
+    pub fn for_standard_selection(mode: Mode, user_tz: Option<&'static TimezoneProfile>) -> Self {
         Self {
             policy: TimezonePolicy::for_mode_with_user_selection(mode, user_tz),
         }
@@ -678,20 +722,76 @@ mod tests {
     }
 
     #[test]
-    fn override_with_user_selection_respects_l41_for_strict() {
-        // The high-level `TimezoneOverride::with_user_selection`
+    fn standard_rejects_user_selection_outside_common_timezones() {
+        // Hardened input (P0-4, 2026-05-22): an arbitrary
+        // `&'static TimezoneProfile` outside the curated cohort
+        // list is rejected — falls back to NativePassThrough rather
+        // than honoring an out-of-cohort selection that would split
+        // the analyzed cohort surface.
+        static OUT_OF_COHORT_TZ: TimezoneProfile = TimezoneProfile {
+            iana_name: "Pacific/Auckland",
+            offset_minutes: 720,
+            dst_observed: true,
+            abbreviation: "NZST",
+        };
+        assert!(!is_in_common_timezones(&OUT_OF_COHORT_TZ));
+        let p =
+            TimezonePolicy::for_mode_with_user_selection(Mode::Standard, Some(&OUT_OF_COHORT_TZ));
+        assert!(
+            matches!(p, TimezonePolicy::NativePassThrough),
+            "Standard with out-of-cohort selection must fall back to NativePassThrough, got {:?}",
+            p,
+        );
+    }
+
+    #[test]
+    fn is_in_common_timezones_address_identity_only() {
+        // Validation uses address identity (`std::ptr::eq`), NOT
+        // value equality. Two TimezoneProfiles with identical
+        // fields but different addresses must NOT pass validation.
+        // Sanity-check the curated entries pass.
+        for entry in COMMON_TIMEZONES {
+            assert!(
+                is_in_common_timezones(entry),
+                "{} must pass validation",
+                entry.iana_name,
+            );
+        }
+        // A value-equal but address-distinct profile fails.
+        static VALUE_TWIN_UTC: TimezoneProfile = TimezoneProfile {
+            iana_name: "UTC",
+            offset_minutes: 0,
+            dst_observed: false,
+            abbreviation: "UTC",
+        };
+        // VALUE_TWIN_UTC has the same fields as LOCKED_TIMEZONE_PROFILE
+        // (which is also UTC/0/false) but lives at a different
+        // address. Validation must reject it.
+        assert!(
+            !is_in_common_timezones(&VALUE_TWIN_UTC),
+            "value-equal but address-distinct profile must NOT pass — cohort surface is address-keyed",
+        );
+    }
+
+    #[test]
+    fn override_for_standard_selection_respects_l41_for_strict() {
+        // The high-level `TimezoneOverride::for_standard_selection`
         // helper threads the same L41 enforcement as the policy
         // function. Strict + any user TZ MUST still report
-        // `Some(&LOCKED_TIMEZONE_PROFILE)`.
-        let ovr = TimezoneOverride::with_user_selection(Mode::Strict, Some(&AMERICA_LOS_ANGELES));
+        // `Some(&LOCKED_TIMEZONE_PROFILE)`. The constructor was
+        // renamed from `with_user_selection` on 2026-05-22 to make
+        // the contract (Strict is non-loosenable) unambiguous from
+        // the call site.
+        let ovr =
+            TimezoneOverride::for_standard_selection(Mode::Strict, Some(&AMERICA_LOS_ANGELES));
         let p = ovr.profile().expect("Strict carries a profile");
         assert!(std::ptr::eq(p, &LOCKED_TIMEZONE_PROFILE));
         assert_eq!(ovr.surface(), WebIdlSurface::Timezone);
     }
 
     #[test]
-    fn override_with_user_selection_threads_choice_for_standard() {
-        let ovr = TimezoneOverride::with_user_selection(Mode::Standard, Some(&EUROPE_LONDON));
+    fn override_for_standard_selection_threads_choice_for_standard() {
+        let ovr = TimezoneOverride::for_standard_selection(Mode::Standard, Some(&EUROPE_LONDON));
         let p = ovr.profile().expect("UserConfigured carries a profile");
         assert!(std::ptr::eq(p, &EUROPE_LONDON));
         assert_eq!(ovr.surface(), WebIdlSurface::Timezone);

@@ -14,13 +14,17 @@
 //!   * Module 9  (lifecycle): IdentityProfile is the spawn token.
 //!   * Module 12 (sandbox):   `mode` selects the kernel sandbox profile.
 //!
-//! TODO(Module 27 / 82): redactor must use `redacted_label()` in any log or
-//!   crash-report write per L27 + §5.10. Default Debug shows the user-visible
-//!   name and is acceptable inside the trusted broker; it must NOT survive a
-//!   redaction pass without being rewritten.
-//! TODO(Module 27): consider salting `redacted_label()`'s id prefix with a
-//!   per-session value if cross-line correlation in opt-in disk logs becomes
-//!   a concern.
+//! TODO(L27 forensic-redaction invariant + Module 82 crash containment,
+//!   Phase 11): redactor must use `redacted_label()` in any log or
+//!   crash-report write per L27 + §5.10. Default Debug shows the
+//!   user-visible name and is acceptable inside the trusted broker; it
+//!   must NOT survive a redaction pass without being rewritten.
+//! TODO(L27 — opt-in disk-log discipline, future): consider salting
+//!   `redacted_label()`'s id prefix with a per-session value if cross-line
+//!   correlation in opt-in disk logs becomes a concern. (Original wording
+//!   "Module 27 / 82" conflated L27 — the architecture invariant — with
+//!   Module 27 which is Canvas readback normalization; corrected on
+//!   2026-05-21.)
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

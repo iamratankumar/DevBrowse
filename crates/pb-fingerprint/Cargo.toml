@@ -11,8 +11,13 @@ publish.workspace = true
 # visible in code review. See lib.rs doc-comment for details.
 
 [dependencies]
-pb-ipc    = { workspace = true }
+# pb-ipc is allowed per L12 sibling-leaf rule but not used at v1;
+# add back when pb-browser (Phase 11 / Module 80) wires the FFI
+# bridge that consumes pb-ipc messages.
 pb-config = { workspace = true }
+sha2      = { workspace = true }
 uuid      = { workspace = true }
 thiserror = { workspace = true }
-tracing   = { workspace = true }
+# tracing is unused at v1 (every override's install() is a no-op
+# pending libxul FFI); add back when the FFI bridge needs
+# structured logging.

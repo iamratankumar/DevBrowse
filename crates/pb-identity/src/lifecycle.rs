@@ -28,11 +28,16 @@
 //! Suspend semantics (Module 10) layers on top of this state machine; this
 //! module only owns the Active <-> Suspended state transition.
 //!
-//! TODO(Module 10): freeze JS execution, network, timers when state
-//!   transitions to Suspended. Resume reverses.
-//! TODO(Module 12, `pb-sandbox`): orchestrator picks a `SandboxProfile`
-//!   keyed on `mode` from the SpawnRenderer action. Lifecycle does not own
-//!   sandbox state; it only signals when a fresh renderer is needed.
+//! TODO(Module 10 hooks shipped; runtime consumption at pb-browser
+//!   Phase 11 / Module 80 + libxul FFI): freeze JS execution, network,
+//!   timers when state transitions to Suspended. Resume reverses.
+//!   Module 10 ships the policy types in `suspension.rs`; the runtime
+//!   wire-up is pb-browser's job.
+//! TODO(Module 12 type shipped; profile selection at pb-browser
+//!   Phase 11 / Module 80): orchestrator picks a `SandboxProfile`
+//!   (Module 12's `pb-sandbox` type) keyed on `mode` from the
+//!   SpawnRenderer action. Lifecycle does not own sandbox state; it
+//!   only signals when a fresh renderer is needed.
 //! TODO(Module 80): orchestrator wires tokio Mutex + IPC dispatch around
 //!   this manager. ProcessAction values map onto pb-ipc messages
 //!   (SpawnTab, DestroyTab) defined in Module 5.

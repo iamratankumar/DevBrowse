@@ -84,10 +84,13 @@
 //   host with an ECH config offered must never silently fall back
 //   to plaintext SNI in Strict; this module enforces the policy and
 //   23.4 enforces the pin lookup.
-// TODO(Module 11): replace the EchDecision::WarnAndAllow caller hook
-//   with the structured warning-emission surface so the Strict-mode
-//   "no ECH config offered" case routes into the same observability
-//   pipeline as blocklist scheduler warnings.
+// TODO(integration with Module 11 warning surface — Module 11 has
+//   shipped `crates/pb-identity/src/warnings.rs`): replace the
+//   `EchDecision::WarnAndAllow` caller hook with the structured
+//   warning-emission surface so the Strict-mode "no ECH config
+//   offered" case routes into the same observability pipeline as
+//   blocklist scheduler warnings. Integration is gated on the
+//   orchestrator at Phase 11 / Module 80.
 // TODO(Module 67): the signed-manifest update channel may eventually
 //   carry an ECH-config retry-cap override (per-host); track here.
 

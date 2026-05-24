@@ -241,33 +241,140 @@ mod tests {
     // test breaks before downstream phases consume it.
 
     #[test]
+    fn farbling_determinism_holds_per_origin_and_profile() {
+        // Phase 5.5 Module 35.5 / subtask 9 — cross-phase
+        // contract: future Phase 6+ tests can assert
+        // same-(origin, profile_id) ⇒ identical farbled output
+        // and different-origin ⇒ different farbled output by
+        // calling `PartitionKey::farbling_seed()` directly.
+        // This fixture pins that contract via pb-testkit's
+        // existing pb-storage + pb-fingerprint imports.
+        use pb_fingerprint::farble_canvas_byte;
+        use pb_storage::derive_partition_key;
+
+        let pid_a = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let pid_b = Uuid::parse_str("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        let ctx = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+
+        // Same (origin, profile_id) yields identical farbling seed
+        // and therefore identical farbled output for identical
+        // (surface, index, amplitude).
+        let seed1 = derive_partition_key("example.com", pid_a, ctx).farbling_seed();
+        let seed2 = derive_partition_key("example.com", pid_a, ctx).farbling_seed();
+        assert_eq!(seed1, seed2);
+        for i in 0..50_u64 {
+            assert_eq!(
+                farble_canvas_byte(&seed1, i, 1),
+                farble_canvas_byte(&seed2, i, 1),
+            );
+        }
+
+        // Different origin ⇒ different seed ⇒ farble streams
+        // diverge. Sampling 100 indices and asserting at least
+        // 30 disagree is comfortably above random-collision
+        // noise for amplitude=1 (3 buckets; uncorrelated streams
+        // expect ~67% disagreement).
+        let cross_origin_seed = derive_partition_key("evil.com", pid_a, ctx).farbling_seed();
+        assert_ne!(seed1, cross_origin_seed);
+        let mut differ = 0;
+        for i in 0..100_u64 {
+            if farble_canvas_byte(&seed1, i, 1) != farble_canvas_byte(&cross_origin_seed, i, 1) {
+                differ += 1;
+            }
+        }
+        assert!(
+            differ >= 30,
+            "expected meaningful cross-origin divergence, got {}/100",
+            differ,
+        );
+
+        // Different identity profile ⇒ different seed ⇒ different
+        // farble stream (cross-profile protection inherits from
+        // the partition_key per-(origin, profile_id) keying).
+        let cross_profile_seed = derive_partition_key("example.com", pid_b, ctx).farbling_seed();
+        assert_ne!(seed1, cross_profile_seed);
+    }
+
+    #[test]
+    fn harness_drives_recording_override_into_every_js_context_for_every_surface() {
+        // P1-2 cross-phase contract (2026-05-22). For each
+        // `WebIdlSurface` variant the harness MUST iterate
+        // `JsContext::ALL` and invoke `install()` once per
+        // (surface, JS context). `RecordingFingerprintOverride`
+        // captures the actual invocations so a future libxul
+        // bridge regression that forgets to register an override
+        // into a worker / SW scope fails this contract test at
+        // cross-phase layer (catches a class of bugs the per-
+        // module no-op `install()` tests cannot).
+        for surface in WebIdlSurface::ALL {
+            let rec = RecordingFingerprintOverride::new(*surface);
+            for mode in [pb_config::Mode::Standard, pb_config::Mode::Strict] {
+                let harness = FingerprintOverrideHarness::new(mode, fixed_test_uuid());
+                let _ = harness.install_into_every_context(&rec);
+            }
+            let installs = rec.installs();
+            // 2 modes × |JsContext::ALL| installs per surface.
+            assert_eq!(
+                installs.len(),
+                2 * JsContext::ALL.len(),
+                "surface {:?}: expected 2 × {} installs, got {}",
+                surface,
+                JsContext::ALL.len(),
+                installs.len(),
+            );
+            // Every JsContext variant appears at least once.
+            for jsc in JsContext::ALL {
+                assert!(
+                    installs.iter().any(|i| i.js_context == *jsc),
+                    "surface {:?}: missing JsContext {:?}",
+                    surface,
+                    jsc,
+                );
+            }
+            // Both modes appear.
+            assert!(installs.iter().any(|i| i.mode == pb_config::Mode::Standard));
+            assert!(installs.iter().any(|i| i.mode == pb_config::Mode::Strict));
+        }
+    }
+
+    #[test]
     fn harness_drives_module_27_canvas_override_across_modes() {
         use pb_fingerprint::{CanvasOverride, CanvasReadbackPolicy};
 
-        // Standard: CanvasOverride is registered structurally but
-        // carries a NativePassThrough policy (Strict-only
-        // normalization decision; see canvas.rs module doc).
+        // v1.23 amiunique-generic refactor (Module 35.5): both
+        // modes carry the cohort-locked rasterizer profile;
+        // Standard adds the STANDARD_FARBLING_PROFILE layer for
+        // per-(origin, profile_id) noise on dynamic readbacks.
+        // Pre-refactor "Standard = NativePassThrough" is
+        // superseded.
         let standard_ovr = CanvasOverride::new(pb_config::Mode::Standard);
         let ctxs = FingerprintOverrideHarness::standard().install_into_every_context(&standard_ovr);
         assert_eq!(ctxs.len(), JsContext::ALL.len());
         assert_eq!(standard_ovr.surface(), WebIdlSurface::Canvas);
         assert!(matches!(
             standard_ovr.policy(),
-            CanvasReadbackPolicy::NativePassThrough
+            CanvasReadbackPolicy::Normalized {
+                farbling: Some(_),
+                ..
+            }
         ));
-        assert_eq!(standard_ovr.profile(), None);
+        // Standard now exposes a profile (was: None).
+        let standard_profile = standard_ovr.profile();
 
-        // Strict: same registration shape, but the policy now
-        // carries the locked profile and `install` (when libxul is
-        // wired) will activate the normalized rasterizer hook.
+        // Strict: same registration shape, same cohort profile,
+        // but farbling=None (pure cohort lock).
         let strict_ovr = CanvasOverride::new(pb_config::Mode::Strict);
         let ctxs = FingerprintOverrideHarness::strict().install_into_every_context(&strict_ovr);
         assert_eq!(ctxs.len(), JsContext::ALL.len());
         assert_eq!(strict_ovr.surface(), WebIdlSurface::Canvas);
         assert!(matches!(
             strict_ovr.policy(),
-            CanvasReadbackPolicy::NormalizedRasterizer(_)
+            CanvasReadbackPolicy::Normalized { farbling: None, .. }
         ));
-        assert!(strict_ovr.profile().is_some());
+        let strict_profile = strict_ovr.profile();
+
+        // Cohort unification across modes: both reference the
+        // same profile address.
+        assert!(std::ptr::eq(standard_profile, strict_profile));
     }
 }

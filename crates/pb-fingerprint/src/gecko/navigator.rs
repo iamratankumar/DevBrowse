@@ -22,10 +22,16 @@
 //!     field. Two profile statics (`STANDARD_NAVIGATOR_PROFILE` and
 //!     `STRICT_NAVIGATOR_PROFILE`) differ in `hardware_concurrency`
 //!     only; every other field is identical.
-//!   * **L41 / L44** — `navigator.userAgentData` (Client Hints) +
-//!     `navigator.webdriver` are part of the L44 disabled-by-default
-//!     set when re-enabling would re-expose host signals; the
-//!     mode-invariant lock is the v1 enforcement.
+//!   * **L41 / L44** — `navigator.webdriver` is part of the L44
+//!     disabled-by-default set when re-enabling would re-expose host
+//!     signals; the mode-invariant lock (`webdriver = false`) is the
+//!     v1 enforcement. `navigator.userAgentData` is intentionally
+//!     **not exposed** — Firefox does not implement Client Hints
+//!     (Chromium-only API); DevBrowse blends into the Firefox cohort
+//!     by matching that absence, not by spoofing a Chrome-style
+//!     brand list. See `NavigatorSurface` enum (no `UserAgentData`
+//!     variant) — the libxul bridge ensures `'userAgentData' in
+//!     navigator === false`.
 //!   * **§5.5** — central fingerprint bucketing: every Navigator
 //!     accessor routes through one `NavigatorProfile`.
 //!   * **threat-model A1** — `navigator.userAgent` /
@@ -55,9 +61,11 @@
 //!     Navigator parameters every renderer returns to JS regardless
 //!     of host OS.
 //!   * `NavigatorSurface::ALL` enumerating every JS accessor the
-//!     libxul bridge must wire (17 variants covering the full
-//!     `Navigator` IDL plus `userAgentData` / `webdriver` /
-//!     `doNotTrack` / `globalPrivacyControl`).
+//!     libxul bridge must wire (16 variants covering the full
+//!     Firefox-equivalent `Navigator` IDL plus `webdriver` /
+//!     `doNotTrack` / `globalPrivacyControl`). `userAgentData` is
+//!     intentionally absent — Firefox does not expose the Chromium
+//!     Client Hints surface, and DevBrowse matches Firefox.
 //!   * A `FingerprintOverride` impl for `WebIdlSurface::Navigator`.
 //!
 //! It IS NOT:
@@ -68,9 +76,10 @@
 //!     `NavigatorProfile`.
 //!   * The Client Hints HTTP headers (`Sec-CH-UA-*`) — those live
 //!     in pb-network (Module 22 already scrubs them from outbound
-//!     requests). This module pins the JS-visible
-//!     `navigator.userAgentData` Brand list; the HTTP-side scrub is
-//!     the cohort enforcement on the wire.
+//!     requests). DevBrowse does NOT expose the JS-visible
+//!     `navigator.userAgentData` (matches Firefox); the HTTP-side
+//!     scrub is the cohort enforcement on the wire for any header
+//!     that nonetheless ends up generated downstream.
 //!   * `navigator.geolocation` / `navigator.mediaDevices` /
 //!     `navigator.bluetooth` / etc. — those are the L44 disabled-by-
 //!     default APIs owned by Phase 5.5 Module 35.3 (a single
@@ -78,8 +87,10 @@
 //!     "report Navigator identity" surface, not the "block API"
 //!     surface.
 //
-// TODO(Module 1 / libxul): the Navigator accessors are exposed
-//   via the WebIDL interface in `dom/webidl/Navigator.webidl` (and
+// TODO(libxul FFI bridge — pb-browser Phase 11 / Module 80;
+//   verified by Module 69 in Phase 9): the Navigator accessors are
+//   exposed via the WebIDL interface in `dom/webidl/Navigator.webidl`
+//   (and
 //   the worker / shared-worker / service-worker variants). The FFI
 //   bridge must register a per-renderer callback for each accessor
 //   that returns the locked profile's field for every JsContext::ALL
@@ -153,9 +164,10 @@ pub struct NavigatorProfile {
     /// `navigator.appVersion` — derived from UA; everything after
     /// the `"Mozilla/"` prefix.
     pub app_version: &'static str,
-    /// `navigator.vendor` — `""` (Firefox convention; Chrome sets
-    /// `"Google Inc."`). Empty string is the cohort identifier
-    /// claiming the Mozilla / Firefox family.
+    /// `navigator.vendor` — `""` (Firefox convention). Empty string
+    /// is the cohort identifier claiming the Mozilla / Firefox
+    /// family. The locked value is asserted in tests; any non-empty
+    /// value here would break the Firefox blend-in posture.
     pub vendor: &'static str,
     /// `navigator.platform` — `"Linux x86_64"` (matches the UA token).
     pub platform: &'static str,
@@ -302,10 +314,16 @@ impl NavigatorPolicy {
 /// Every JS accessor on `Navigator` that exposes a cohort-relevant
 /// signal.
 ///
-/// 17 variants covering the full WebIDL `Navigator` interface plus
-/// `userAgentData` (Client Hints object), `webdriver` (automation
-/// detection), `doNotTrack` (DNT preference echo), and
-/// `globalPrivacyControl` (Sec-GPC preference echo).
+/// 16 variants covering the full Firefox-equivalent WebIDL
+/// `Navigator` interface plus `webdriver` (automation detection),
+/// `doNotTrack` (DNT preference echo), and `globalPrivacyControl`
+/// (Sec-GPC preference echo).
+///
+/// **`userAgentData` is intentionally NOT in this enum.** Firefox
+/// does not implement the Chromium Client Hints API; DevBrowse
+/// blends into the Firefox cohort by matching that absence rather
+/// than spoofing a brand list. The libxul bridge ensures
+/// `'userAgentData' in navigator === false`.
 ///
 /// Dynamic state accessors (`onLine`, `cookieEnabled`) are
 /// intentionally NOT in this enum — they reflect runtime state
@@ -320,7 +338,9 @@ pub enum NavigatorSurface {
     AppName,
     /// `navigator.appVersion` — UA-derived.
     AppVersion,
-    /// `navigator.vendor` — Firefox: `""`; Chrome: `"Google Inc."`.
+    /// `navigator.vendor` — Firefox convention `""` (empty string;
+    /// the empty value is itself the Mozilla / Firefox cohort
+    /// identifier).
     Vendor,
     /// `navigator.platform` — `"Linux x86_64"` regardless of host.
     Platform,
@@ -342,10 +362,6 @@ pub enum NavigatorSurface {
     Plugins,
     /// `navigator.mimeTypes` — empty `MimeTypeArray`.
     MimeTypes,
-    /// `navigator.userAgentData` — Client Hints object
-    /// (`NavigatorUAData`); brand list locked to the same Firefox
-    /// 128 cohort.
-    UserAgentData,
     /// `navigator.webdriver` — automation-detection boolean
     /// (locked `false`).
     Webdriver,
@@ -374,7 +390,6 @@ impl NavigatorSurface {
         Self::DeviceMemory,
         Self::Plugins,
         Self::MimeTypes,
-        Self::UserAgentData,
         Self::Webdriver,
         Self::DoNotTrack,
         Self::GlobalPrivacyControl,
@@ -629,12 +644,15 @@ mod tests {
 
     #[test]
     fn navigator_surface_all_covers_idl() {
-        // 17 surfaces: 13 classic Navigator accessors + Client Hints
-        // (UserAgentData) + Webdriver + DoNotTrack +
-        // GlobalPrivacyControl. Dynamic-state accessors (onLine,
-        // cookieEnabled) are intentionally excluded — they reflect
-        // runtime state from pb-network / pb-storage.
-        assert_eq!(NavigatorSurface::ALL.len(), 17);
+        // 16 surfaces: 13 classic Navigator accessors + Webdriver +
+        // DoNotTrack + GlobalPrivacyControl. Firefox-equivalent IDL.
+        // **`userAgentData` is intentionally NOT in this enum** —
+        // Firefox does not expose the Chromium Client Hints surface;
+        // DevBrowse matches Firefox by not exposing it. Dynamic-state
+        // accessors (onLine, cookieEnabled) are intentionally
+        // excluded — they reflect runtime state from pb-network /
+        // pb-storage.
+        assert_eq!(NavigatorSurface::ALL.len(), 16);
         for v in [
             NavigatorSurface::UserAgent,
             NavigatorSurface::AppName,
@@ -649,7 +667,6 @@ mod tests {
             NavigatorSurface::DeviceMemory,
             NavigatorSurface::Plugins,
             NavigatorSurface::MimeTypes,
-            NavigatorSurface::UserAgentData,
             NavigatorSurface::Webdriver,
             NavigatorSurface::DoNotTrack,
             NavigatorSurface::GlobalPrivacyControl,
@@ -658,6 +675,23 @@ mod tests {
                 NavigatorSurface::ALL.contains(&v),
                 "missing surface: {:?}",
                 v
+            );
+        }
+    }
+
+    #[test]
+    fn user_agent_data_is_not_exposed_firefox_parity() {
+        // Firefox does not implement the Chromium Client Hints API
+        // (`navigator.userAgentData`). DevBrowse blends into the
+        // Firefox cohort by matching the absence rather than
+        // spoofing a brand list. Structural assertion: no variant
+        // named UserAgentData exists in NavigatorSurface::ALL.
+        for v in NavigatorSurface::ALL {
+            let name = format!("{:?}", v).to_lowercase();
+            assert!(
+                !name.contains("useragentdata") && !name.contains("user_agent_data"),
+                "NavigatorSurface variant {:?} should not exist (Firefox does not expose userAgentData)",
+                v,
             );
         }
     }
@@ -741,7 +775,6 @@ mod tests {
                 NavigatorSurface::DeviceMemory => "device-memory",
                 NavigatorSurface::Plugins => "plugins",
                 NavigatorSurface::MimeTypes => "mime-types",
-                NavigatorSurface::UserAgentData => "user-agent-data",
                 NavigatorSurface::Webdriver => "webdriver",
                 NavigatorSurface::DoNotTrack => "do-not-track",
                 NavigatorSurface::GlobalPrivacyControl => "global-privacy-control",
