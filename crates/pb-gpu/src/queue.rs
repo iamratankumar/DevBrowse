@@ -531,7 +531,7 @@ mod tests {
         q.submit(tb).unwrap(); // B1
         q.submit(ta).unwrap(); // A2
         q.submit(ta).unwrap(); // A3
-        // First three dequeues: A1, B1, A2 (RR).
+                               // First three dequeues: A1, B1, A2 (RR).
         assert_eq!(q.dequeue().unwrap().profile_id, pid_a());
         assert_eq!(q.dequeue().unwrap().profile_id, pid_b());
         assert_eq!(q.dequeue().unwrap().profile_id, pid_a());

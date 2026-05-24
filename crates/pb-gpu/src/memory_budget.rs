@@ -413,12 +413,7 @@ mod tests {
 
     fn small_profile() -> BudgetProfile {
         // 64 MiB → 67_108_864 bytes; smallest legal cap.
-        BudgetProfile::from_config(
-            &GpuConfig {
-                memory_cap_mib: 64,
-            },
-            Mode::Standard,
-        )
+        BudgetProfile::from_config(&GpuConfig { memory_cap_mib: 64 }, Mode::Standard)
     }
 
     // ── BudgetProfile ──────────────────────────────────────────────────
@@ -433,12 +428,7 @@ mod tests {
     fn budget_profile_clamps_below_min() {
         // Defense in depth — pb-config's loader rejects below 64,
         // but a caller bypassing the loader still gets a sane value.
-        let p = BudgetProfile::from_config(
-            &GpuConfig {
-                memory_cap_mib: 16,
-            },
-            Mode::Standard,
-        );
+        let p = BudgetProfile::from_config(&GpuConfig { memory_cap_mib: 16 }, Mode::Standard);
         assert_eq!(p.cap_bytes, 64 * 1024 * 1024);
     }
 
@@ -593,7 +583,8 @@ mod tests {
         b.touch(t, id_old).unwrap();
         let _ = b.try_allocate(t, half).unwrap();
         // id_old survived (was MRU after touch); id_mid was evicted.
-        b.release(t, id_old).expect("touched id must survive eviction");
+        b.release(t, id_old)
+            .expect("touched id must survive eviction");
         assert_eq!(b.release(t, id_mid), Err(BudgetError::UnknownAllocation));
     }
 

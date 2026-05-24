@@ -195,7 +195,10 @@ mod tests {
 
         b.on_recovery_pair();
 
-        assert_eq!(b.budget.try_allocate(ta, 1024), Err(BudgetError::StaleToken));
+        assert_eq!(
+            b.budget.try_allocate(ta, 1024),
+            Err(BudgetError::StaleToken)
+        );
         assert_eq!(b.scheduler.submit(ta), Err(QueueError::StaleToken));
         // Fresh token at the new epoch works on both resources.
         let ta_new = b.issue_token(pid_a(), Mode::Standard);
