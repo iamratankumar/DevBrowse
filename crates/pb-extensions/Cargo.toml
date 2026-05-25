@@ -6,9 +6,13 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-pb-ipc    = { workspace = true }
-pb-config = { workspace = true }
-tokio     = { workspace = true }
-uuid      = { workspace = true }
-thiserror = { workspace = true }
-tracing   = { workspace = true }
+pb-ipc     = { workspace = true }
+pb-config  = { workspace = true }
+tokio      = { workspace = true }
+uuid       = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+# Module 41 (allowlist enforcer + signature check).
+serde      = { workspace = true }
+serde_json = { workspace = true }
+sha2       = { workspace = true }

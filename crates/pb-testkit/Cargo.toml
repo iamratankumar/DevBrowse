@@ -45,6 +45,15 @@ pb-fingerprint = { path = "../pb-fingerprint" }
 # wiring. pb-gpu's dependency footprint is pb-config + pb-ipc + uuid;
 # all are already transitive deps here.
 pb-gpu         = { path = "../pb-gpu" }
+# Phase 7 / Modules 40-41 — extensions_bundle fixture wraps the
+# Module 40 BlockerPolicy resolver + Module 41 ExtensionController +
+# InMemoryTrustedVerifier so Phase 8+ tests can drive end-to-end
+# "Strict tab + allowlisted extension = chrome undefined" without
+# re-deriving the seed-manifest + verifier wiring. pb-extensions's
+# dependency footprint is pb-ipc + pb-config + serde + serde_json +
+# sha2 + uuid + thiserror + tracing + tokio — all already transitive.
+pb-extensions  = { path = "../pb-extensions" }
+serde_json     = { workspace = true }
 
 # async + utility deps shared with the production crates we mock.
 tokio        = { workspace = true }

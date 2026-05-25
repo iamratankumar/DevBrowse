@@ -844,6 +844,9 @@ version = "0.1.0"
 dependencies = [
  "pb-config",
  "pb-ipc",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tracing",
@@ -975,6 +978,7 @@ name = "pb-testkit"
 version = "0.1.0"
 dependencies = [
  "pb-config",
+ "pb-extensions",
  "pb-fingerprint",
  "pb-gpu",
  "pb-identity",
@@ -984,6 +988,7 @@ dependencies = [
  "pb-storage",
  "proptest",
  "rustls",
+ "serde_json",
  "thiserror",
  "tokio",
  "uuid",

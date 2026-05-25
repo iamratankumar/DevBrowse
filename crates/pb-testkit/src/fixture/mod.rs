@@ -8,6 +8,7 @@
 //!   * NEVER mock around an anti-fingerprint normalization (Phase 1.5
 //!     Strict-mode invariant)
 
+pub mod extensions_bundle;
 pub mod fake_doh;
 pub mod fake_mdns;
 pub mod fingerprint_override;
@@ -21,6 +22,9 @@ pub mod profile;
 // Convenience re-exports so call sites read `fixture::profile()` instead of
 // `fixture::profile::profile()`. The free-function variants are the public
 // API shape the phase file calls out.
+pub use extensions_bundle::{
+    extensions_bundle, ExtensionsBundle, SEED_EXTENSION_ID, SEED_XPI_BYTES,
+};
 pub use fake_doh::{fake_doh, FakeDohResolver, ScriptedDohResponse};
 pub use fake_mdns::{fake_mdns, FakeMdns, MdnsAnnounce, MdnsEvent};
 pub use fingerprint_override::{
