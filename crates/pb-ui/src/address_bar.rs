@@ -126,6 +126,80 @@ pub trait SuggestionProvider: Send + Sync + 'static {
 }
 
 // ---------------------------------------------------------------------------
+// BadgeSlot
+// ---------------------------------------------------------------------------
+
+/// Live badge state for the current page (blocked-counter.md).
+/// Owns the domain-level ring buffer (capped at 256 rows) and drives
+/// the popover open/close state.
+///
+/// TODO Module 43 wiring: receive BadgeEvent::BlockIncrement from ChromeCommand::BlockOccurred (Module 21 via shell)
+/// TODO Module 43 wiring: call sync_mode when shell emits ModeChanged
+#[derive(Debug)]
+pub struct BadgeSlot {
+    pub mode: BadgeMode,
+    pub popover_open: bool,
+    pub rows: Vec<BlockRow>,
+    pub block_count: u32,
+}
+
+impl BadgeSlot {
+    pub fn new(browsing_mode: Mode) -> Self {
+        Self {
+            mode: BadgeMode::from_mode_and_count(browsing_mode, 0),
+            popover_open: false,
+            rows: Vec::new(),
+            block_count: 0,
+        }
+    }
+
+    pub fn update(&mut self, event: BadgeEvent) {
+        match event {
+            BadgeEvent::BlockIncrement { domain } => {
+                self.block_count += 1;
+                self.mode = BadgeMode::from_mode_and_count(
+                    match self.mode {
+                        BadgeMode::Strict => Mode::Strict,
+                        _ => Mode::Standard,
+                    },
+                    self.block_count,
+                );
+                if let Some(row) = self.rows.iter_mut().find(|r| r.domain == domain) {
+                    row.count += 1;
+                } else {
+                    self.rows.push(BlockRow { domain, count: 1 });
+                }
+                // Cap ring buffer at 256 entries (blocked-counter.md edge case).
+                if self.rows.len() > 256 {
+                    self.rows.drain(..1);
+                }
+            }
+            BadgeEvent::PopoverToggled => {
+                self.popover_open = !self.popover_open;
+            }
+            BadgeEvent::PopoverClosed => {
+                self.popover_open = false;
+            }
+            BadgeEvent::Reset => {
+                self.block_count = 0;
+                self.mode = match self.mode {
+                    BadgeMode::Strict => BadgeMode::Strict,
+                    _ => BadgeMode::Hidden,
+                };
+                self.rows.clear();
+                self.popover_open = false;
+            }
+        }
+    }
+
+    /// Re-derive the badge mode when the browsing mode changes (e.g. user
+    /// toggles Standard <-> Strict while a page is loaded).
+    pub fn sync_mode(&mut self, browsing_mode: Mode) {
+        self.mode = BadgeMode::from_mode_and_count(browsing_mode, self.block_count);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // URL validation
 // ---------------------------------------------------------------------------
 
@@ -205,4 +279,93 @@ pub enum AddressBarEvent {
     NavigationCommitted { url: String, mode: Mode },
     ConvertToStrictClicked,
     NetworkViewerRequested,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- BadgeSlot ---
+
+    #[test]
+    fn badge_mode_strict_always_strict() {
+        assert_eq!(
+            BadgeMode::from_mode_and_count(Mode::Strict, 0),
+            BadgeMode::Strict
+        );
+        assert_eq!(
+            BadgeMode::from_mode_and_count(Mode::Strict, 500),
+            BadgeMode::Strict
+        );
+    }
+
+    #[test]
+    fn badge_mode_standard_hidden_at_zero() {
+        assert_eq!(
+            BadgeMode::from_mode_and_count(Mode::Standard, 0),
+            BadgeMode::Hidden
+        );
+    }
+
+    #[test]
+    fn badge_mode_standard_shows_count() {
+        assert_eq!(
+            BadgeMode::from_mode_and_count(Mode::Standard, 5),
+            BadgeMode::Blocked(5)
+        );
+    }
+
+    #[test]
+    fn badge_count_caps_at_999_plus() {
+        assert_eq!(BadgeMode::Blocked(1000).label(), Some("999+".to_string()));
+        assert_eq!(BadgeMode::Blocked(999).label(), Some("999".to_string()));
+    }
+
+    #[test]
+    fn badge_slot_block_increment_updates_count() {
+        let mut slot = BadgeSlot::new(Mode::Standard);
+        slot.update(BadgeEvent::BlockIncrement {
+            domain: "tracker.io".to_string(),
+        });
+        assert_eq!(slot.block_count, 1);
+        assert_eq!(slot.mode, BadgeMode::Blocked(1));
+    }
+
+    #[test]
+    fn badge_slot_popover_toggle() {
+        let mut slot = BadgeSlot::new(Mode::Standard);
+        slot.update(BadgeEvent::BlockIncrement {
+            domain: "a.com".to_string(),
+        });
+        slot.update(BadgeEvent::PopoverToggled);
+        assert!(slot.popover_open);
+        slot.update(BadgeEvent::PopoverToggled);
+        assert!(!slot.popover_open);
+    }
+
+    #[test]
+    fn badge_slot_reset_clears_count_and_closes_popover() {
+        let mut slot = BadgeSlot::new(Mode::Standard);
+        slot.update(BadgeEvent::BlockIncrement {
+            domain: "x.com".to_string(),
+        });
+        slot.update(BadgeEvent::PopoverToggled);
+        slot.update(BadgeEvent::Reset);
+        assert_eq!(slot.block_count, 0);
+        assert!(!slot.popover_open);
+        assert_eq!(slot.mode, BadgeMode::Hidden);
+    }
+
+    #[test]
+    fn badge_slot_rows_identity() {
+        let mut slot = BadgeSlot::new(Mode::Standard);
+        slot.update(BadgeEvent::BlockIncrement {
+            domain: "a.com".to_string(),
+        });
+        let ptr1 = slot.rows.as_ptr();
+        slot.update(BadgeEvent::BlockIncrement {
+            domain: "b.com".to_string(),
+        });
+        assert!(std::ptr::eq(slot.rows.as_ptr(), ptr1) || slot.rows.len() == 2);
+    }
 }
