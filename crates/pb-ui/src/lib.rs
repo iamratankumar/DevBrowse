@@ -17,9 +17,9 @@
 #![allow(dead_code)] // stubs for pending modules 43-64
 
 // ── Module 42 — UI shell (done) ────────────────────────────────────────────
-pub mod tokens;   // design-token constants (codegen from tokens.json)
-pub mod glass;    // GlassPanel widget + glass.wgsl
-pub mod shell;    // Iced application root (Mode, AppState, run())
+pub mod glass; // GlassPanel widget + glass.wgsl
+pub mod shell; // Iced application root (Mode, AppState, run())
+pub mod tokens; // design-token constants (codegen from tokens.json)
 pub mod vibrancy; // VibrancyAdapter trait + NoOpVibrancy stub
 
 // ── Modules 43-64 — pending; stubs only ────────────────────────────────────

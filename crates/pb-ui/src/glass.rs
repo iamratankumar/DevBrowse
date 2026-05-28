@@ -25,10 +25,9 @@
 //! ready to be wired in when Iced exposes compositor texture access.
 
 use iced::{
-    Color, Element, Length, Rectangle, Renderer, Theme,
-    mouse,
+    border, mouse,
     widget::canvas::{self, Frame, Geometry, Path},
-    border,
+    Color, Element, Length, Rectangle, Renderer, Theme,
 };
 
 use crate::tokens;
@@ -97,10 +96,7 @@ impl GlassPanel {
             corner_radius_px: self.corner_radius_px,
             reduced_transparency: self.reduced_transparency,
         };
-        canvas(program)
-            .width(self.width)
-            .height(self.height)
-            .into()
+        canvas(program).width(self.width).height(self.height).into()
     }
 }
 
@@ -149,7 +145,12 @@ impl<Message> canvas::Program<Message> for GlassProgram {
             let sr = lum + (r - lum) * sat;
             let sg = lum + (g - lum) * sat;
             let sb = lum + (b - lum) * sat;
-            Color::from_rgba(sr.clamp(0.0, 1.0), sg.clamp(0.0, 1.0), sb.clamp(0.0, 1.0), a)
+            Color::from_rgba(
+                sr.clamp(0.0, 1.0),
+                sg.clamp(0.0, 1.0),
+                sb.clamp(0.0, 1.0),
+                a,
+            )
         };
 
         // Rounded-rectangle clip path.
@@ -174,9 +175,7 @@ impl<Message> canvas::Program<Message> for GlassProgram {
 }
 
 // Re-export canvas helper so callers don't need to import iced_widget directly.
-fn canvas<P: canvas::Program<Message>, Message>(
-    program: P,
-) -> iced::widget::Canvas<P, Message> {
+fn canvas<P: canvas::Program<Message>, Message>(program: P) -> iced::widget::Canvas<P, Message> {
     iced::widget::canvas(program)
 }
 

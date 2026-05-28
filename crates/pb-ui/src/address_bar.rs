@@ -24,9 +24,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
-use iced::{Element, Length, Task, task};
-#[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
 use iced::widget::{button, column, container, row, text, text_input};
+#[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
+use iced::{task, Element, Length, Task};
 
 #[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
 use crate::glass::GlassPanel;
@@ -172,7 +172,9 @@ pub enum SuggestionEvent {
 #[derive(Debug, Clone)]
 pub enum BadgeEvent {
     /// One domain was blocked on the current page.
-    BlockIncrement { domain: String },
+    BlockIncrement {
+        domain: String,
+    },
     PopoverToggled,
     PopoverClosed,
     /// Navigation started - reset count and close popover.

@@ -17,8 +17,12 @@ fn main() {
     // Tell Cargo to re-run this script only when tokens.json changes.
     println!("cargo:rerun-if-changed={}", tokens_json.display());
 
-    let raw = fs::read_to_string(&tokens_json)
-        .unwrap_or_else(|e| panic!("build.rs: cannot read tokens.json at {}: {e}", tokens_json.display()));
+    let raw = fs::read_to_string(&tokens_json).unwrap_or_else(|e| {
+        panic!(
+            "build.rs: cannot read tokens.json at {}: {e}",
+            tokens_json.display()
+        )
+    });
 
     let tokens: serde_json::Value =
         serde_json::from_str(&raw).expect("build.rs: tokens.json is not valid JSON");
@@ -64,17 +68,28 @@ fn emit_palette(out: &mut String, p: &serde_json::Value) {
 
     // Wallpaper gradient stops
     for key in &[
-        "bg_deep_dark_start", "bg_deep_dark_end",
-        "bg_deep_light_start", "bg_deep_light_end",
-        "glass_reduced_dark", "glass_reduced_light",
-        "text_primary_dark", "text_primary_light",
-        "text_muted_dark", "text_muted_light",
-        "text_dim_dark", "text_dim_light",
-        "accent", "accent_bright",
-        "strict", "strict_bright",
+        "bg_deep_dark_start",
+        "bg_deep_dark_end",
+        "bg_deep_light_start",
+        "bg_deep_light_end",
+        "glass_reduced_dark",
+        "glass_reduced_light",
+        "text_primary_dark",
+        "text_primary_light",
+        "text_muted_dark",
+        "text_muted_light",
+        "text_dim_dark",
+        "text_dim_light",
+        "accent",
+        "accent_bright",
+        "strict",
+        "strict_bright",
         "standard_active",
-        "status_ok", "status_warn", "status_danger",
-        "strict_wallpaper_start", "standard_wallpaper_solid",
+        "status_ok",
+        "status_warn",
+        "status_danger",
+        "strict_wallpaper_start",
+        "standard_wallpaper_solid",
     ] {
         if let Some(hex) = p[key].as_str() {
             let const_name = key.to_uppercase();
@@ -133,9 +148,16 @@ fn emit_radius(out: &mut String, r: &serde_json::Value) {
 fn emit_space(out: &mut String, s: &serde_json::Value) {
     out.push_str("pub mod space {\n");
     for (key, const_name) in &[
-        ("s1", "S1"), ("s2", "S2"), ("s3", "S3"), ("s4", "S4"),
-        ("s5", "S5"), ("s6", "S6"), ("s7", "S7"), ("s8", "S8"),
-        ("s10", "S10"), ("s12", "S12"),
+        ("s1", "S1"),
+        ("s2", "S2"),
+        ("s3", "S3"),
+        ("s4", "S4"),
+        ("s5", "S5"),
+        ("s6", "S6"),
+        ("s7", "S7"),
+        ("s8", "S8"),
+        ("s10", "S10"),
+        ("s12", "S12"),
     ] {
         let v = s[key].as_f64().unwrap_or(0.0) as f32;
         out.push_str(&format!("pub const {const_name}: f32 = {v:.1};\n"));
@@ -220,7 +242,9 @@ fn emit_glass_params(out: &mut String, g: &serde_json::Value) {
         "pub const STRICT_INSET_GLOW: [f32; 4] = [{r:.4}, {gr:.4}, {b:.4}, {a:.4}];\n"
     ));
     let spread = g["strict_inset_glow_spread_px"].as_f64().unwrap_or(60.0) as f32;
-    out.push_str(&format!("pub const STRICT_INSET_GLOW_SPREAD_PX: f32 = {spread:.1};\n"));
+    out.push_str(&format!(
+        "pub const STRICT_INSET_GLOW_SPREAD_PX: f32 = {spread:.1};\n"
+    ));
 
     out.push_str("}\n");
 }

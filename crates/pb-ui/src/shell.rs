@@ -24,14 +24,12 @@
 
 use std::sync::Arc;
 
+use iced::widget::canvas::gradient as canvas_gradient;
 use iced::{
-    Color, Element, Length, Pixels, Rectangle, Renderer,
-    Size, Task, Theme,
     mouse,
     widget::{canvas, container, text, Canvas, Column},
-    window,
+    window, Color, Element, Length, Pixels, Rectangle, Renderer, Size, Task, Theme,
 };
-use iced::widget::canvas::gradient as canvas_gradient;
 use tokio::sync::mpsc;
 
 use crate::tokens;
@@ -198,7 +196,9 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
                 if state.morph_elapsed_ms >= target_ms {
                     state.mode = Mode::Strict;
                     state.phase = AppPhase::Ready;
-                    let _ = state.command_tx.try_send(ChromeCommand::ModeChanged(Mode::Strict));
+                    let _ = state
+                        .command_tx
+                        .try_send(ChromeCommand::ModeChanged(Mode::Strict));
                 }
             }
         }
@@ -232,14 +232,10 @@ fn view(state: &AppState) -> Element<'_, Message> {
     // Stack: wallpaper behind, chrome on top.
     // TODO Module 42 impl: replace `container` stack with `iced::widget::stack`
     // once other modules provide real elements. For now chrome overlays the wallpaper.
-    container(
-        iced::widget::Stack::new()
-            .push(wallpaper)
-            .push(chrome),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    container(iced::widget::Stack::new().push(wallpaper).push(chrome))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn title(state: &AppState) -> String {
@@ -265,7 +261,10 @@ fn theme(_state: &AppState) -> Theme {
 /// Standard: radial gradient centred slightly left of mid-window, deep navy.
 /// Strict:   warmer terracotta-tinted gradient + 2 px terracotta border.
 fn wallpaper_canvas(mode: Mode, reduced: bool) -> Canvas<WallpaperProgram, Message> {
-    Canvas::new(WallpaperProgram { mode, reduced_transparency: reduced })
+    Canvas::new(WallpaperProgram {
+        mode,
+        reduced_transparency: reduced,
+    })
 }
 
 struct WallpaperProgram {
