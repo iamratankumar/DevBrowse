@@ -1,4 +1,4 @@
-//! pb-ui::address_bar — Module 43.
+//! pb-ui::address_bar - Module 43.
 //!
 //! Floating URL bar (440 px centered, 36 px height). Owns UrlInput,
 //! SuggestionList, and BadgeSlot. Emits three events to the shell:
@@ -16,7 +16,6 @@
 //! TODO Module 43 wiring: partition_key <- real profile_id from AppState (Phase 11)
 //! TODO Module 43 wiring: search engine preference <- pb-storage::Settings::search_engine (Module 64)
 
-#[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
 use std::future::Future;
 use std::pin::Pin;
 #[allow(unused_imports)] // forward-declared for Module 43 struct impls (Tasks 2-5)
@@ -117,7 +116,7 @@ pub enum SuggestionKind {
 /// Async suggestion source. Implement for DDG (Phase 11) or mock (tests).
 ///
 /// L40: no keystrokes reach the provider before the 200 ms debounce fires.
-/// The `partition_key` is the active profile_id — never a URL or display name.
+/// The `partition_key` is the active profile_id - never a URL or display name.
 pub trait SuggestionProvider: Send + Sync + 'static {
     fn suggest<'a>(
         &'a self,
@@ -176,7 +175,7 @@ pub enum BadgeEvent {
     BlockIncrement { domain: String },
     PopoverToggled,
     PopoverClosed,
-    /// Navigation started — reset count and close popover.
+    /// Navigation started - reset count and close popover.
     Reset,
 }
 

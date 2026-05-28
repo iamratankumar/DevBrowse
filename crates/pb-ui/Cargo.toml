@@ -5,9 +5,6 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# Iced (wgpu backend) is the UI framework — added in Phase 8 (Module 39).
-# iced = { version = "0.13", features = ["wgpu"] }
-
 [dependencies]
 pb-ipc    = { workspace = true }
 pb-config = { workspace = true }
@@ -15,3 +12,16 @@ tokio     = { workspace = true }
 uuid      = { workspace = true }
 thiserror = { workspace = true }
 tracing   = { workspace = true }
+serde     = { workspace = true }
+serde_json = { workspace = true }
+# Phase 8 Module 42 — Iced 0.14 + wgpu backend (architecture v1.24 stack lock).
+# "wgpu" feature enables the custom Shader widget used by pb-ui::glass.
+iced  = { workspace = true }
+wgpu  = { workspace = true }
+
+[[bin]]
+name = "devbrowse_ui"
+path = "src/bin/devbrowse_ui.rs"
+
+[build-dependencies]
+serde_json = { workspace = true }
