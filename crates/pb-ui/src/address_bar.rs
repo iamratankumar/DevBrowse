@@ -140,6 +140,8 @@ pub struct BadgeSlot {
     pub mode: BadgeMode,
     pub popover_open: bool,
     pub rows: Vec<BlockRow>,
+    /// Running total of blocks since last navigation reset. Not necessarily equal
+    /// to the sum of `rows[*].count` when the ring buffer has evicted old entries.
     pub block_count: u32,
 }
 
@@ -357,15 +359,28 @@ mod tests {
     }
 
     #[test]
-    fn badge_slot_rows_identity() {
+    fn badge_slot_sync_mode_to_strict() {
         let mut slot = BadgeSlot::new(Mode::Standard);
         slot.update(BadgeEvent::BlockIncrement {
             domain: "a.com".to_string(),
         });
-        let ptr1 = slot.rows.as_ptr();
-        slot.update(BadgeEvent::BlockIncrement {
-            domain: "b.com".to_string(),
-        });
-        assert!(std::ptr::eq(slot.rows.as_ptr(), ptr1) || slot.rows.len() == 2);
+        assert_eq!(slot.mode, BadgeMode::Blocked(1));
+        slot.sync_mode(Mode::Strict);
+        // L41: once synced to Strict the count is irrelevant - badge is always Strict.
+        assert_eq!(slot.mode, BadgeMode::Strict);
+    }
+
+    #[test]
+    fn badge_slot_ring_buffer_caps_at_256() {
+        let mut slot = BadgeSlot::new(Mode::Standard);
+        for i in 0..=256 {
+            slot.update(BadgeEvent::BlockIncrement {
+                domain: format!("domain{i}.com"),
+            });
+        }
+        // 257 unique domains pushed; ring buffer must hold at most 256.
+        assert_eq!(slot.rows.len(), 256);
+        // Running total is still accurate (not trimmed).
+        assert_eq!(slot.block_count, 257);
     }
 }
