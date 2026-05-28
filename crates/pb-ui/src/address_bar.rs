@@ -422,12 +422,15 @@ mod tests {
     async fn mock_provider_returns_suggestions_for_nonempty_query() {
         let p = MockSuggestionProvider;
         let results = p.suggest("rust", "profile-1").await;
-        assert!(!results.is_empty());
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].kind, SuggestionKind::Search);
+        assert_eq!(results[1].kind, SuggestionKind::Url);
     }
 
     #[cfg(feature = "mock")]
     #[tokio::test]
-    async fn mock_provider_partition_key_is_passed_through() {
+    async fn mock_provider_ignores_partition_key_no_panic() {
+        // The mock discards partition_key by design (L40 - real provider will use it).
         let p = MockSuggestionProvider;
         let _ = p.suggest("anything", "my-profile-id").await;
     }
