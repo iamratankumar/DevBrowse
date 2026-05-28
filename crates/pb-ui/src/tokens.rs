@@ -1,6 +1,6 @@
 //! Design tokens — Module 42 (pb-ui::tokens).
 //!
-//! All constants are emitted at build time from `docs/design/tokens.json`
+//! All constants are emitted at build time from `design/tokens.json`
 //! via `crates/pb-ui/build.rs`. Every Phase 8 module imports from here;
 //! never hard-code palette/radius/motion/glass values inline.
 //!
@@ -10,7 +10,7 @@
 //! Sub-modules: `palette`, `radius`, `space`, `type_scale`, `motion`,
 //! `layout`, `glass`.
 
-// Include the codegen output produced by build.rs from docs/design/tokens.json.
+// Include the codegen output produced by build.rs from design/tokens.json.
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 #[cfg(test)]

@@ -8,7 +8,13 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked  = "deny"
-ignore  = []
+ignore  = [
+    # RUSTSEC-2024-0436: `paste` proc-macro is unmaintained (dtolnay archived it).
+    # No safe upgrade exists. Pulled in by metal -> wgpu-hal -> wgpu -> iced_wgpu.
+    # We do not call paste directly; risk is confined to the Metal GPU backend.
+    # Re-evaluate when wgpu drops or replaces the dep.
+    { id = "RUSTSEC-2024-0436" },
+]
 
 [licenses]
 allow = [
@@ -23,6 +29,9 @@ allow = [
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
+    # BSL-1.0 (Boost Software License 1.0) — OSI-approved, FSF-free permissive.
+    # Pulled in by clipboard-win + error-code via iced -> iced_winit -> window_clipboard.
+    "BSL-1.0",
     # webpki-roots redistributes Mozilla's CCADB trust-anchor dataset.
     # CDLA-Permissive-2.0 (Community Data License Agreement) is the SPDX
     # license used for community data redistribution; it is OSI-aligned

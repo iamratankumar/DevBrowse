@@ -5,7 +5,7 @@
 //! Mobile UI shells (iOS SwiftUI, Android Jetpack Compose) land in Phase 12.
 //!
 //! Module 42 deliverables (this session):
-//!   - `tokens`  — design-token constants emitted from docs/design/tokens.json.
+//!   - `tokens`  — design-token constants emitted from design/tokens.json.
 //!   - `glass`   — frosted-glass Iced canvas widget + shaders/glass.wgsl.
 //!   - `shell`   — Iced application root (wallpaper, mode identity, command bus).
 //!   - `vibrancy`— OS vibrancy adapter stub (Phase 8 = NoOpVibrancy).

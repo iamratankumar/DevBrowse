@@ -1,7 +1,6 @@
 //! Build script — Module 42 design-token codegen.
 //!
-//! Reads `docs/design/tokens.json` (relative to the workspace root, located
-//! via `CARGO_MANIFEST_DIR/../../docs/design/tokens.json`) and emits
+//! Reads `design/tokens.json` (workspace root) and emits
 //! `$OUT_DIR/tokens.rs` containing typed Rust constants consumed by every
 //! Phase 8 module via `pb_ui::tokens`.
 //!
@@ -12,7 +11,7 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let tokens_json = manifest.join("../../docs/design/tokens.json");
+    let tokens_json = manifest.join("../../design/tokens.json");
 
     // Tell Cargo to re-run this script only when tokens.json changes.
     println!("cargo:rerun-if-changed={}", tokens_json.display());
@@ -30,7 +29,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let out_path = out_dir.join("tokens.rs");
 
-    let mut out = String::from("// AUTO-GENERATED — do not edit by hand.\n// Source: docs/design/tokens.json (Phase 8 Module 42 codegen)\n\n");
+    let mut out = String::from("// AUTO-GENERATED — do not edit by hand.\n// Source: design/tokens.json (Phase 8 Module 42 codegen)\n\n");
 
     emit_palette(&mut out, &tokens["palette"]);
     emit_radius(&mut out, &tokens["radius"]);
