@@ -125,6 +125,37 @@ pub trait SuggestionProvider: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Vec<Suggestion>> + Send + 'a>>;
 }
 
+/// Test-only suggestion provider. Gated behind the `mock` feature so it
+/// cannot ship in production builds. Never makes network requests (L40).
+#[cfg(feature = "mock")]
+pub struct MockSuggestionProvider;
+
+#[cfg(feature = "mock")]
+impl SuggestionProvider for MockSuggestionProvider {
+    fn suggest<'a>(
+        &'a self,
+        query: &'a str,
+        _partition_key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Vec<Suggestion>> + Send + 'a>> {
+        let query = query.to_string();
+        Box::pin(async move {
+            if query.is_empty() {
+                return Vec::new();
+            }
+            vec![
+                Suggestion {
+                    text: format!("search DuckDuckGo for \"{query}\""),
+                    kind: SuggestionKind::Search,
+                },
+                Suggestion {
+                    text: format!("https://{query}.com"),
+                    kind: SuggestionKind::Url,
+                },
+            ]
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BadgeSlot
 // ---------------------------------------------------------------------------
@@ -382,5 +413,30 @@ mod tests {
         assert_eq!(slot.rows.len(), 256);
         // Running total is still accurate (not trimmed).
         assert_eq!(slot.block_count, 257);
+    }
+
+    // --- SuggestionProvider ---
+
+    #[cfg(feature = "mock")]
+    #[tokio::test]
+    async fn mock_provider_returns_suggestions_for_nonempty_query() {
+        let p = MockSuggestionProvider;
+        let results = p.suggest("rust", "profile-1").await;
+        assert!(!results.is_empty());
+    }
+
+    #[cfg(feature = "mock")]
+    #[tokio::test]
+    async fn mock_provider_partition_key_is_passed_through() {
+        let p = MockSuggestionProvider;
+        let _ = p.suggest("anything", "my-profile-id").await;
+    }
+
+    #[cfg(feature = "mock")]
+    #[tokio::test]
+    async fn mock_provider_empty_query_returns_empty() {
+        let p = MockSuggestionProvider;
+        let results = p.suggest("", "profile-1").await;
+        assert!(results.is_empty());
     }
 }

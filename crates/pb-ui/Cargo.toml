@@ -23,5 +23,10 @@ wgpu  = { workspace = true }
 name = "devbrowse_ui"
 path = "src/bin/devbrowse_ui.rs"
 
+[features]
+# Enables MockSuggestionProvider for in-crate async tests.
+# Must never be enabled in production builds.
+mock = []
+
 [build-dependencies]
 serde_json = { workspace = true }
