@@ -14,7 +14,9 @@
 //!   L28 — glass aesthetic + accessibility + reduce-transparency fallback.
 //!   L41 — Strict identity non-customizable.
 //!   L42 — Strict letterbox: warm-dark borders when window ≠ 200×100 grid.
-//!   §3.1 — mode locked at tab/window creation.
+//!   §3.1 — Standard→Strict conversion is in-place (same tab); product decision
+//!           overrides the original "mode locked at creation" note. Strict→Standard
+//!           remains forbidden (§3.6).
 //!   §3.6 — no Strict-to-Standard transition.
 //!
 //! TODO Module 42 impl: wire tokio mpsc `CommandBus` through to Modules 43-64
@@ -28,11 +30,11 @@ use iced::widget::canvas::gradient as canvas_gradient;
 use iced::{
     mouse,
     widget::{canvas, container, text, Canvas, Column},
-    window, Color, Element, Length, Pixels, Rectangle, Renderer, Size, Task, Theme,
+    window, Color, Element, Length, Rectangle, Renderer, Size, Task, Theme,
 };
 use tokio::sync::mpsc;
 
-use crate::tokens;
+use crate::design;
 // VibrancyAdapter imported here for future wiring; shell queries it to decide
 // whether to skip the in-app blur pass (Module 42 TODO item).
 #[allow(unused_imports)]
@@ -77,6 +79,8 @@ pub struct AppState {
     profile_name: String,
     /// Open-tab count for the tabs-pill counter.
     pub tab_count: usize,
+    /// Relative window width size
+    pub window_width: f32,
     /// OS `prefers-reduced-transparency` flag forwarded from the window event.
     /// When true, all `GlassPanel` surfaces use the solid fallback (§3.4).
     pub reduced_transparency: bool,
@@ -86,6 +90,8 @@ pub struct AppState {
     morph_elapsed_ms: u32,
     /// Sends application-level commands to chrome module subscribers (Modules 43-64).
     pub command_tx: Arc<mpsc::Sender<ChromeCommand>>,
+    /// Module 43 — address bar.
+    pub address_bar: crate::address_bar::AddressBar,
 }
 
 impl AppState {
@@ -95,10 +101,12 @@ impl AppState {
             phase: AppPhase::Starting,
             profile_name,
             tab_count: 0,
+            window_width: 1280.0,
             reduced_transparency: false,
             reduced_motion: false,
             morph_elapsed_ms: 0,
             command_tx,
+            address_bar: crate::address_bar::AddressBar::new_stub(Mode::Standard),
         }
     }
 
@@ -148,6 +156,10 @@ pub enum Message {
     ReducedMotionChanged(bool),
     /// Window is being closed.
     WindowCloseRequested,
+    //window resizing
+    WindowResized(f32),
+    /// Address bar internal message (Module 43).
+    AddressBar(crate::address_bar::AddressBarMsg),
     /// No-op used as a placeholder for mount points not yet connected.
     None,
 }
@@ -189,13 +201,14 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
             let target_ms = if state.reduced_motion {
                 0
             } else {
-                tokens::motion::MODE_CONVERT_MS
+                design::motion::MODE_CONVERT_MS
             };
             if state.phase == AppPhase::TransitioningMode {
                 state.morph_elapsed_ms = elapsed_ms.min(target_ms);
                 if state.morph_elapsed_ms >= target_ms {
                     state.mode = Mode::Strict;
                     state.phase = AppPhase::Ready;
+                    state.address_bar.sync_mode(Mode::Strict);
                     let _ = state
                         .command_tx
                         .try_send(ChromeCommand::ModeChanged(Mode::Strict));
@@ -207,9 +220,39 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
         }
         Message::ReducedMotionChanged(v) => {
             state.reduced_motion = v;
+            state.address_bar.reduced_motion = v;
+        }
+        Message::WindowResized(w) => {
+            state.window_width = w;
         }
         Message::WindowCloseRequested => {
             state.phase = AppPhase::Closing;
+        }
+        Message::AddressBar(ab_msg) => {
+            let (event, task) = state.address_bar.update(ab_msg);
+            if let Some(ev) = event {
+                match ev {
+                    crate::address_bar::AddressBarEvent::ConvertToStrictClicked => {
+                        // In-place conversion: same tab becomes Strict immediately.
+                        // §3.6: no reverse. MorphTick animation wired when timer
+                        // subscription lands (post Phase 8).
+                        if state.mode == Mode::Standard && state.phase == AppPhase::Ready {
+                            state.mode = Mode::Strict;
+                            state.address_bar.sync_mode(Mode::Strict);
+                            let _ = state
+                                .command_tx
+                                .try_send(ChromeCommand::ModeChanged(Mode::Strict));
+                        }
+                    }
+                    crate::address_bar::AddressBarEvent::NavigationCommitted { .. } => {
+                        // TODO Module 43 wiring: forward to pb-network NavigationBroker (Phase 11)
+                    }
+                    crate::address_bar::AddressBarEvent::NetworkViewerRequested => {
+                        // TODO Module 43 wiring: ChromeCommand::OpenNetworkViewer (Module 60)
+                    }
+                }
+            }
+            return task.map(Message::AddressBar);
         }
         Message::None => {}
     }
@@ -289,7 +332,7 @@ impl canvas::Program<Message> for WallpaperProgram {
             Mode::Standard => {
                 if self.reduced_transparency {
                     // §3.4 solid fallback for Standard.
-                    let [r, g, b, _] = tokens::palette::STANDARD_WALLPAPER_SOLID;
+                    let [r, g, b, _] = design::palette::STANDARD_WALLPAPER_SOLID;
                     frame.fill_rectangle(
                         iced::Point::ORIGIN,
                         bounds.size(),
@@ -298,8 +341,8 @@ impl canvas::Program<Message> for WallpaperProgram {
                 } else {
                     // Deep navy linear gradient top-left → bottom-right
                     // (tokens: bg_deep_dark_start → bg_deep_dark_end).
-                    let [sr, sg, sb, _] = tokens::palette::BG_DEEP_DARK_START;
-                    let [er, eg, eb, _] = tokens::palette::BG_DEEP_DARK_END;
+                    let [sr, sg, sb, _] = design::palette::BG_DEEP_DARK_START;
+                    let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
                     let grad = canvas_gradient::Linear::new(
                         iced::Point::ORIGIN,
                         iced::Point::new(bounds.width, bounds.height),
@@ -312,7 +355,7 @@ impl canvas::Program<Message> for WallpaperProgram {
             Mode::Strict => {
                 if self.reduced_transparency {
                     // §3.4 solid fallback for Strict.
-                    let [r, g, b, _] = tokens::palette::STRICT_WALLPAPER_START;
+                    let [r, g, b, _] = design::palette::STRICT_WALLPAPER_START;
                     frame.fill_rectangle(
                         iced::Point::ORIGIN,
                         bounds.size(),
@@ -320,8 +363,8 @@ impl canvas::Program<Message> for WallpaperProgram {
                     );
                 } else {
                     // Warmer terracotta-tinted gradient for Strict wallpaper.
-                    let [sr, sg, sb, _] = tokens::palette::STRICT_WALLPAPER_START;
-                    let [er, eg, eb, _] = tokens::palette::BG_DEEP_DARK_END;
+                    let [sr, sg, sb, _] = design::palette::STRICT_WALLPAPER_START;
+                    let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
                     let grad = canvas_gradient::Linear::new(
                         iced::Point::ORIGIN,
                         iced::Point::new(bounds.width, bounds.height),
@@ -332,9 +375,9 @@ impl canvas::Program<Message> for WallpaperProgram {
                 }
 
                 // Strict border: 2 px terracotta border + inset glow (L42, mode-indicator.md).
-                let [br, bg, bb, _] = tokens::palette::STRICT;
+                let [br, bg, bb, _] = design::palette::STRICT;
                 let border_color = Color::from_rgb(br, bg, bb);
-                let border_px = tokens::layout::STRICT_BORDER_PX;
+                let border_px = design::layout::STRICT_BORDER_PX;
 
                 // Top edge
                 frame.fill_rectangle(
@@ -374,41 +417,28 @@ impl canvas::Program<Message> for WallpaperProgram {
 fn traffic_light_spacer<'a>() -> Element<'a, Message> {
     // Reserve 14 px top padding so chrome doesn't overlap macOS traffic-lights.
     container(text(""))
-        .height(Length::Fixed(tokens::layout::TRAFFIC_LIGHT_INSET_PX))
+        .height(Length::Fixed(design::layout::TRAFFIC_LIGHT_INSET_PX))
         .into()
 }
 
 /// Top-bar chrome placeholder. Replaced module-by-module as Phase 8 lands.
 /// Each line is a mount point comment tracking which module fills the slot.
 fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
-    let mode_label = match state.mode {
-        Mode::Standard => "Standard",
-        Mode::Strict => "Strict · close tab to exit",
-    };
+    // Module 43: address bar — centered horizontally in the top bar.
+    let address_bar = container(
+        state
+            .address_bar
+            .view(state.window_width * 0.40)
+            .map(Message::AddressBar),
+    )
+    .width(Length::Fill)
+    .center_x(Length::Fill);
 
-    let status = match state.phase {
-        AppPhase::Starting => "Loading…",
-        AppPhase::Ready => mode_label,
-        AppPhase::TransitioningMode => "Converting to Strict…",
-        AppPhase::Closing => "Closing…",
-    };
-
-    // TODO Module 43 mount point: address bar
     // TODO Module 44 mount point: tab bar / identity capsule
     // TODO Module 46 mount point: new tab page
     // TODO Module 53 mount point: mode-switch popup
     // TODO Module 64 mount point: first-launch wizard overlay
-    container(
-        text(status)
-            .size(Pixels(tokens::type_scale::BODY_PX))
-            .color(Color::from([
-                tokens::palette::TEXT_PRIMARY_DARK[0],
-                tokens::palette::TEXT_PRIMARY_DARK[1],
-                tokens::palette::TEXT_PRIMARY_DARK[2],
-            ])),
-    )
-    .padding(tokens::space::S8)
-    .into()
+    Column::new().push(address_bar).into()
 }
 
 // ---------------------------------------------------------------------------
@@ -424,8 +454,12 @@ pub fn run() -> iced::Result {
         .title(title)
         .theme(theme)
         .centered()
+        .subscription(subscription)
         .window(window_settings())
         .run()
+}
+fn subscription(_state: &AppState) -> iced::Subscription<Message> {
+    window::resize_events().map(|(_, size)| Message::WindowResized(size.width))
 }
 
 fn window_settings() -> window::Settings {
@@ -499,7 +533,7 @@ mod tests {
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
         // One tick at the full duration.
-        let target = tokens::motion::MODE_CONVERT_MS;
+        let target = design::motion::MODE_CONVERT_MS;
         let _ = update(&mut state, Message::MorphTick(target));
         assert_eq!(state.mode, Mode::Strict);
         assert_eq!(state.phase, AppPhase::Ready);
@@ -531,6 +565,6 @@ mod tests {
     #[test]
     fn strict_border_constant_matches_token() {
         // L42: 2 px terracotta border in Strict.
-        assert_eq!(tokens::layout::STRICT_BORDER_PX, 2.0);
+        assert_eq!(design::layout::STRICT_BORDER_PX, 2.0);
     }
 }

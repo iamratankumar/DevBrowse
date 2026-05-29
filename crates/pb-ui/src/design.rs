@@ -1,4 +1,4 @@
-//! Design tokens — Module 42 (pb-ui::tokens).
+//! Design constants — Module 42 (pb-ui::design).
 //!
 //! All constants are emitted at build time from `design/tokens.json`
 //! via `crates/pb-ui/build.rs`. Every Phase 8 module imports from here;
@@ -11,7 +11,7 @@
 //! `layout`, `glass`.
 
 // Include the codegen output produced by build.rs from design/tokens.json.
-include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
+include!(concat!(env!("OUT_DIR"), "/design.rs"));
 
 #[cfg(test)]
 mod tests {

@@ -1,8 +1,8 @@
-//! Build script — Module 42 design-token codegen.
+//! Build script — Module 42 design-constant codegen.
 //!
 //! Reads `design/tokens.json` (workspace root) and emits
-//! `$OUT_DIR/tokens.rs` containing typed Rust constants consumed by every
-//! Phase 8 module via `pb_ui::tokens`.
+//! `$OUT_DIR/design.rs` containing typed Rust constants consumed by every
+//! Phase 8 module via `pb_ui::design`.
 //!
 //! The same JSON is the single source of truth for Phase 12 Swift/Kotlin
 //! shells; those codegen passes run outside Cargo and are not handled here.
@@ -27,7 +27,7 @@ fn main() {
         serde_json::from_str(&raw).expect("build.rs: tokens.json is not valid JSON");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let out_path = out_dir.join("tokens.rs");
+    let out_path = out_dir.join("design.rs");
 
     let mut out = String::from("// AUTO-GENERATED — do not edit by hand.\n// Source: design/tokens.json (Phase 8 Module 42 codegen)\n\n");
 
@@ -39,7 +39,7 @@ fn main() {
     emit_layout(&mut out, &tokens["layout"]);
     emit_glass_params(&mut out, &tokens["glass"]);
 
-    fs::write(&out_path, out).expect("build.rs: cannot write tokens.rs");
+    fs::write(&out_path, out).expect("build.rs: cannot write design.rs");
 }
 
 fn hex_to_rgba(hex: &str) -> (f32, f32, f32, f32) {

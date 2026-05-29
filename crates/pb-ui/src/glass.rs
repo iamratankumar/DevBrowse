@@ -30,7 +30,7 @@ use iced::{
     Color, Element, Length, Rectangle, Renderer, Theme,
 };
 
-use crate::tokens;
+use crate::design;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -39,8 +39,8 @@ use crate::tokens;
 /// A frosted-glass chrome surface.
 ///
 /// All Phase 8 modules use `GlassPanel::new(...)` rather than hard-coding
-/// colour or blur values. Token constants live in `pb_ui::tokens::glass` and
-/// `pb_ui::tokens::palette`.
+/// colour or blur values. Token constants live in `pb_ui::design::glass` and
+/// `pb_ui::design::palette`.
 #[derive(Debug, Clone)]
 pub struct GlassPanel {
     /// RGBA tint composited over the blurred wallpaper (0.0–1.0 each).
@@ -64,12 +64,12 @@ impl GlassPanel {
     /// Construct a URL-bar glass capsule using the standard token values.
     pub fn url_bar(reduced_transparency: bool) -> Self {
         Self {
-            tint_rgba: tokens::palette::GLASS_TINT_DARK,
-            blur_sigma_px: tokens::glass::URL_BAR_BLUR_SIGMA,
-            saturate: tokens::glass::URL_BAR_SATURATE,
-            corner_radius_px: tokens::radius::CAPSULE_PX,
-            width: Length::Fixed(tokens::layout::URL_BAR_WIDTH_PX),
-            height: Length::Fixed(tokens::layout::TOP_BAR_HEIGHT_PX),
+            tint_rgba: design::palette::GLASS_TINT_DARK,
+            blur_sigma_px: design::glass::URL_BAR_BLUR_SIGMA,
+            saturate: design::glass::URL_BAR_SATURATE,
+            corner_radius_px: design::radius::CAPSULE_PX,
+            width: Length::Fixed(design::layout::URL_BAR_WIDTH_PX),
+            height: Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX),
             reduced_transparency,
         }
     }
@@ -77,10 +77,10 @@ impl GlassPanel {
     /// Construct a panel glass surface (settings, network viewer, popovers).
     pub fn panel(width: Length, height: Length, reduced_transparency: bool) -> Self {
         Self {
-            tint_rgba: tokens::palette::GLASS_TINT_DARK,
-            blur_sigma_px: tokens::glass::PANEL_BLUR_SIGMA,
-            saturate: tokens::glass::PANEL_SATURATE,
-            corner_radius_px: tokens::radius::PANEL_PX,
+            tint_rgba: design::palette::GLASS_TINT_DARK,
+            blur_sigma_px: design::glass::PANEL_BLUR_SIGMA,
+            saturate: design::glass::PANEL_SATURATE,
+            corner_radius_px: design::radius::PANEL_PX,
             width,
             height,
             reduced_transparency,
@@ -132,7 +132,7 @@ impl<Message> canvas::Program<Message> for GlassProgram {
         // solid fallback colour from §3.4 of system.md.
         let base_color = if use_solid {
             // §3.4 solid fallback: #14161e (dark mode)
-            let [r, g, b, _] = tokens::palette::GLASS_REDUCED_DARK;
+            let [r, g, b, _] = design::palette::GLASS_REDUCED_DARK;
             Color::from_rgba(r, g, b, 1.0)
         } else {
             // Full blur path: the solid tint is an approximation until the
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn url_bar_glass_uses_token_sigma() {
         let g = GlassPanel::url_bar(false);
-        assert_eq!(g.blur_sigma_px, tokens::glass::URL_BAR_BLUR_SIGMA);
+        assert_eq!(g.blur_sigma_px, design::glass::URL_BAR_BLUR_SIGMA);
     }
 
     #[test]
@@ -206,18 +206,18 @@ mod tests {
     #[test]
     fn panel_glass_uses_panel_sigma() {
         let g = GlassPanel::panel(Length::Fill, Length::Fill, false);
-        assert_eq!(g.blur_sigma_px, tokens::glass::PANEL_BLUR_SIGMA);
+        assert_eq!(g.blur_sigma_px, design::glass::PANEL_BLUR_SIGMA);
     }
 
     #[test]
     fn corner_radius_url_bar_matches_capsule_token() {
         let g = GlassPanel::url_bar(false);
-        assert_eq!(g.corner_radius_px, tokens::radius::CAPSULE_PX);
+        assert_eq!(g.corner_radius_px, design::radius::CAPSULE_PX);
     }
 
     #[test]
     fn corner_radius_panel_matches_panel_token() {
         let g = GlassPanel::panel(Length::Fill, Length::Fill, false);
-        assert_eq!(g.corner_radius_px, tokens::radius::PANEL_PX);
+        assert_eq!(g.corner_radius_px, design::radius::PANEL_PX);
     }
 }
