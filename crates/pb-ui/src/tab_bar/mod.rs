@@ -483,9 +483,21 @@ impl TabBar {
     }
 
     fn close_tab(&mut self, id: usize) -> Option<TabBarEvent> {
+        // Determine successor before removal: prefer right neighbour, fall back
+        // to left (when closing the last tab), fall back to 0 (no tabs left).
+        let successor = if self.active_id == id {
+            let idx = self.tabs.iter().position(|t| t.id == id).unwrap_or(0);
+            self.tabs.get(idx + 1)
+                .or_else(|| self.tabs.get(idx.saturating_sub(1)))
+                .map(|t| t.id)
+        } else {
+            None
+        };
         self.tabs.retain(|t| t.id != id);
         if self.active_id == id {
-            self.active_id = self.tabs.last().map(|t| t.id).unwrap_or(0);
+            self.active_id = successor.unwrap_or_else(|| {
+                self.tabs.first().map(|t| t.id).unwrap_or(0)
+            });
         }
         // Re-evaluate hover from the last known cursor position so the tab
         // that shifted into the closed tab's slot immediately shows its X button.
@@ -568,6 +580,34 @@ mod tests {
         assert!(event.is_none());
         assert_eq!(tb.modal, StrictCloseModal::Hidden);
         assert_eq!(tb.tab_count(), 5);
+    }
+
+    #[test]
+    fn close_active_tab_activates_right_neighbour() {
+        // Stub tabs: ids 0,1,2,3,4. Active = 2 (index 2). Right neighbour = id 3.
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        tb.active_id = 2;
+        tb.update(TabBarMsg::TabCloseRequested(2));
+        assert_eq!(tb.active_id, 3, "should land on right neighbour (id 3)");
+    }
+
+    #[test]
+    fn close_last_tab_activates_left_neighbour() {
+        // Active = 3 (last Standard tab, index 3). No right → fall to left (id 2).
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        // Remove strict tab so id 3 is the last.
+        tb.tabs.retain(|t| t.id != 4);
+        tb.active_id = 3;
+        tb.update(TabBarMsg::TabCloseRequested(3));
+        assert_eq!(tb.active_id, 2, "should fall back to left neighbour (id 2)");
+    }
+
+    #[test]
+    fn close_non_active_tab_leaves_active_unchanged() {
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        tb.active_id = 2;
+        tb.update(TabBarMsg::TabCloseRequested(3));
+        assert_eq!(tb.active_id, 2, "active tab should not change");
     }
 
     #[test]

@@ -403,10 +403,10 @@ fn view(state: &AppState) -> Element<'_, Message> {
         .map(Message::TabBar);
 
     let sidebar_w = design::layout::SIDEBAR_COLLAPSED_PX;
-    let sidebar_bottom_pad = match state.tab_bar.position {
-        crate::tab_bar::TabBarPosition::Bottom => design::layout::TAB_BAR_HEIGHT_PX,
-        crate::tab_bar::TabBarPosition::Top    => 0.0,
-    };
+    // Sidebar always extends to the window bottom regardless of tab bar position.
+    // The strip only renders in the content column (x ≥ 52 px) so there is no
+    // overlap with the sidebar column (x = 0–52 px).
+    let sidebar_bottom_pad = 0.0_f32;
 
     // Sidebar: fixed 52 px column. The sidebar widget owns the 38 px top gap
     // (Space before the glass) so the glass never covers traffic-light buttons.
