@@ -28,5 +28,7 @@ path = "src/bin/devbrowse_ui.rs"
 # Must never be enabled in production builds.
 mock = []
 
+
+
 [build-dependencies]
 serde_json = { workspace = true }

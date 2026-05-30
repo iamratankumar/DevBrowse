@@ -41,6 +41,7 @@ pub mod reader_mode;
 pub mod settings;
 pub mod site_customizer;
 pub mod strict_popup;
+pub mod sidebar;
 pub mod tab_bar;
 pub mod tab_search;
 pub mod wizard;

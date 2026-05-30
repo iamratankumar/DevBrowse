@@ -79,8 +79,14 @@ pub struct AppState {
     profile_name: String,
     /// Open-tab count for the tabs-pill counter.
     pub tab_count: usize,
-    /// Relative window width size
+    /// Window width in logical pixels (updated on every resize event).
     pub window_width: f32,
+    /// Window height in logical pixels (updated on every resize event).
+    pub window_height: f32,
+    /// Main window ID captured from the first resize event.
+    pub window_id: Option<window::Id>,
+    /// True when the window is in OS-level fullscreen.
+    pub is_fullscreen: bool,
     /// OS `prefers-reduced-transparency` flag forwarded from the window event.
     /// When true, all `GlassPanel` surfaces use the solid fallback (§3.4).
     pub reduced_transparency: bool,
@@ -92,6 +98,10 @@ pub struct AppState {
     pub command_tx: Arc<mpsc::Sender<ChromeCommand>>,
     /// Module 43 — address bar.
     pub address_bar: crate::address_bar::AddressBar,
+    /// Module 44 — tab bar, identity capsule, tabs-pill.
+    pub tab_bar: crate::tab_bar::TabBar,
+    /// Module 44.3 — vertical pill sidebar.
+    pub sidebar: crate::sidebar::Sidebar,
 }
 
 impl AppState {
@@ -102,12 +112,25 @@ impl AppState {
             profile_name,
             tab_count: 0,
             window_width: 1280.0,
+            window_height: 800.0,
+            window_id: None,
+            is_fullscreen: false,
             reduced_transparency: false,
             reduced_motion: false,
             morph_elapsed_ms: 0,
             command_tx,
             address_bar: crate::address_bar::AddressBar::new_stub(Mode::Standard),
+            tab_bar: {
+                let mut tb = crate::tab_bar::TabBar::new(crate::tab_bar::TabBarPosition::Top);
+                tb.sync_window(1280.0);
+                tb
+            },
+            sidebar: crate::sidebar::Sidebar::new(),
         }
+    }
+
+    pub fn profile_name(&self) -> &str {
+        &self.profile_name
     }
 
     /// Redacted profile label for screen-reader narration. Never exposes the
@@ -156,10 +179,25 @@ pub enum Message {
     ReducedMotionChanged(bool),
     /// Window is being closed.
     WindowCloseRequested,
-    //window resizing
-    WindowResized(f32),
+    /// Window resized — captures the window ID on first fire.
+    WindowResized(window::Id, Size),
+    /// Custom traffic-light buttons (cross-platform, decorations: false).
+    CloseWindow,
+    MinimizeWindow,
+    MaximizeWindow,
+    /// Drag the frameless window by the title-bar strip.
+    DragWindow,
     /// Address bar internal message (Module 43).
     AddressBar(crate::address_bar::AddressBarMsg),
+    /// Tab bar internal message (Module 44).
+    TabBar(crate::tab_bar::TabBarMsg),
+    /// Sidebar internal message (Module 44.3).
+    Sidebar(crate::sidebar::SidebarMsg),
+    /// Global cursor position during a tab/sidebar drag (from the full-window
+    /// capture layer). Allows dragging outside the widget's own mouse_area.
+    GlobalDragMove(iced::Point),
+    /// Mouse released anywhere in the window — ends any active drag.
+    GlobalDragEnd,
     /// No-op used as a placeholder for mount points not yet connected.
     None,
 }
@@ -183,6 +221,8 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
         Message::ProfileLoaded(name) => {
             state.profile_name = name;
             state.phase = AppPhase::Ready;
+            let pname = state.profile_name().to_string();
+            state.tab_bar.sync_mode(state.mode, &pname);
             let _ = state.command_tx.try_send(ChromeCommand::ProfileLoaded);
         }
         Message::ProfileLoadFailed => {
@@ -209,6 +249,8 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
                     state.mode = Mode::Strict;
                     state.phase = AppPhase::Ready;
                     state.address_bar.sync_mode(Mode::Strict);
+                    let pname = state.profile_name().to_string();
+                    state.tab_bar.sync_mode(Mode::Strict, &pname);
                     let _ = state
                         .command_tx
                         .try_send(ChromeCommand::ModeChanged(Mode::Strict));
@@ -222,8 +264,33 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
             state.reduced_motion = v;
             state.address_bar.reduced_motion = v;
         }
-        Message::WindowResized(w) => {
-            state.window_width = w;
+        Message::WindowResized(id, size) => {
+            state.window_id = Some(id);
+            state.window_width = size.width;
+            state.window_height = size.height;
+            state.tab_bar.sync_window(size.width);
+        }
+        Message::CloseWindow => return iced::exit(),
+        Message::MinimizeWindow => {
+            if let Some(id) = state.window_id {
+                return window::minimize(id, true);
+            }
+        }
+        Message::MaximizeWindow => {
+            if let Some(id) = state.window_id {
+                state.is_fullscreen = !state.is_fullscreen;
+                let mode = if state.is_fullscreen {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                return window::set_mode(id, mode);
+            }
+        }
+        Message::DragWindow => {
+            if let Some(id) = state.window_id {
+                return window::drag(id);
+            }
         }
         Message::WindowCloseRequested => {
             state.phase = AppPhase::Closing;
@@ -239,6 +306,8 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         if state.mode == Mode::Standard && state.phase == AppPhase::Ready {
                             state.mode = Mode::Strict;
                             state.address_bar.sync_mode(Mode::Strict);
+                            let pname = state.profile_name().to_string();
+                            state.tab_bar.sync_mode(Mode::Strict, &pname);
                             let _ = state
                                 .command_tx
                                 .try_send(ChromeCommand::ModeChanged(Mode::Strict));
@@ -254,31 +323,320 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
             }
             return task.map(Message::AddressBar);
         }
+        Message::TabBar(tb_msg) => {
+            if let Some(event) = state.tab_bar.update(tb_msg) {
+                match event {
+                    crate::tab_bar::TabBarEvent::TabClosed(_id) => {
+                        // TODO Module 44 wiring: notify pb-network::TabBroker (Phase 11, Module 80)
+                    }
+                    crate::tab_bar::TabBarEvent::NewTabRequested => {
+                        // TODO Module 44 wiring: create new tab (Phase 11, Module 80)
+                    }
+                    crate::tab_bar::TabBarEvent::WindowDragRequested => {
+                        if let Some(id) = state.window_id {
+                            return window::drag(id);
+                        }
+                    }
+                }
+            }
+        }
+        Message::Sidebar(sb_msg) => {
+            if let Some(ev) = state.sidebar.update(sb_msg) {
+                match ev {
+                    crate::sidebar::SidebarEvent::TabActivated(id) => {
+                        let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::TabActivated(id));
+                    }
+                    crate::sidebar::SidebarEvent::NewTabRequested => {
+                        let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::NewTabPressed);
+                    }
+                    crate::sidebar::SidebarEvent::SearchRequested => {
+                        // TODO Module 44.3 wiring: command bar pre-filled /tab (Module 64.13)
+                    }
+                    crate::sidebar::SidebarEvent::FavoritesRequested => {
+                        // TODO Module 44.3 wiring: bookmarks panel (Module 49)
+                    }
+                    crate::sidebar::SidebarEvent::GearRequested => {
+                        // TODO Module 44.3 wiring: settings panel (Module 52)
+                    }
+                    crate::sidebar::SidebarEvent::WindowDragRequested => {
+                        if let Some(id) = state.window_id {
+                            return window::drag(id);
+                        }
+                    }
+                    crate::sidebar::SidebarEvent::TabsReordered { from_id, to_id } => {
+                        let fi = state.tab_bar.tabs.iter().position(|t| t.id == from_id);
+                        let ti = state.tab_bar.tabs.iter().position(|t| t.id == to_id);
+                        if let (Some(f), Some(t)) = (fi, ti) {
+                            state.tab_bar.tabs.swap(f, t);
+                        }
+                    }
+                }
+            }
+        }
+        Message::GlobalDragMove(pos) => {
+            // Feed strip-local x into tab-bar drag while cursor is outside the strip.
+            if state.tab_bar.drag_active {
+                let local_x = (pos.x - design::layout::SIDEBAR_COLLAPSED_PX).max(0.0);
+                let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::StripMoved(local_x));
+            }
+            // Sidebar: drag position tracked via PillEntered — no y update needed.
+        }
+        Message::GlobalDragEnd => {
+            if state.tab_bar.drag_id.is_some() || state.tab_bar.drag_active {
+                let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::StripReleased);
+            }
+        }
         Message::None => {}
     }
     Task::none()
 }
 
 fn view(state: &AppState) -> Element<'_, Message> {
-    // Wallpaper layer — full-window gradient. Paints behind all chrome.
-    let wallpaper = wallpaper_canvas(state.mode, state.reduced_transparency)
+    let corner_radius = if state.is_fullscreen { 0.0 } else { 12.0 };
+    let wallpaper = wallpaper_canvas(state.mode, state.reduced_transparency, corner_radius)
         .width(Length::Fill)
         .height(Length::Fill);
 
-    // Traffic-light spacer: 14 px from left + top edges (layout::TRAFFIC_LIGHT_INSET).
-    // The actual traffic-light controls are provided by the OS window decoration;
-    // we reserve space so chrome elements don't overlap them on macOS.
-    let chrome = Column::new()
-        .push(traffic_light_spacer())
-        .push(chrome_placeholder(state));
+    let strip = state
+        .tab_bar
+        .view_strip(state.window_width)
+        .map(Message::TabBar);
 
-    // Stack: wallpaper behind, chrome on top.
-    // TODO Module 42 impl: replace `container` stack with `iced::widget::stack`
-    // once other modules provide real elements. For now chrome overlays the wallpaper.
-    container(iced::widget::Stack::new().push(wallpaper).push(chrome))
+    let sidebar_w = design::layout::SIDEBAR_COLLAPSED_PX;
+    let sidebar_bottom_pad = match state.tab_bar.position {
+        crate::tab_bar::TabBarPosition::Bottom => design::layout::TAB_BAR_HEIGHT_PX,
+        crate::tab_bar::TabBarPosition::Top    => 0.0,
+    };
+
+    // Sidebar: fixed 52 px column. The sidebar widget owns the 38 px top gap
+    // (Space before the glass) so the glass never covers traffic-light buttons.
+    // Row layout gives the Column a well-defined height = full window height,
+    // making the Space + Fill distribution reliable.
+    let sidebar = state
+        .sidebar
+        .view(
+            &state.tab_bar.tabs,
+            state.tab_bar.active_id,
+            state.reduced_transparency,
+            sidebar_bottom_pad,
+            state.window_height,
+        )
+        .map(Message::Sidebar);
+
+    // Content column: naturally starts at x=52 because of the Row sibling.
+    let content_column = match state.tab_bar.position {
+        crate::tab_bar::TabBarPosition::Bottom => Column::new()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .push(traffic_light_spacer())
+            .push(chrome_placeholder(state))
+            .push(iced::widget::Space::new().height(Length::Fill))
+            .push(strip),
+        crate::tab_bar::TabBarPosition::Top => Column::new()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .push(traffic_light_spacer())
+            .push(chrome_placeholder(state)),
+    };
+
+    // Row: [sidebar 52px] | [content fills rest]
+    // wallpaper sits in the Stack behind the Row so both sidebar glass and
+    // content area are transparent over it. Explicit Fill width/height on the
+    // Row is required: Iced's Row defaults to Length::Shrink for both axes,
+    // and in a Stack the children inherit the Shrink-resolved limits unless
+    // the Row asks for Fill itself. Without this, the sidebar's glass canvas
+    // receives an undersized `bounds.height` and the glass appears clipped /
+    // mis-positioned relative to the window.
+    let main_row = iced::widget::Row::new()
+        .push(container(sidebar).width(Length::Fixed(sidebar_w)).height(Length::Fill))
+        .push(content_column)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    // Stack::new() defaults to Length::Shrink. The wallpaper Canvas has
+    // Length::Fill x Length::Fill, but we set Stack dimensions explicitly to
+    // make layout deterministic across Iced versions.
+    let mut main_stack = iced::widget::Stack::new()
+        .push(wallpaper)
+        .push(main_row)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    if let Some(modal) = state.tab_bar.view_strict_close_modal() {
+        main_stack = main_stack.push(
+            container(modal.map(Message::TabBar))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center),
+        );
+    }
+
+    // Strict border overlay — rendered ABOVE main_row so the 2 px terracotta
+    // ring appears on top of the sidebar, not hidden beneath it. (L42)
+    if state.mode == Mode::Strict {
+        let [br, bg, bb, _] = design::palette::STRICT;
+        let strict_color = Color::from_rgb(br, bg, bb);
+        let corner = if state.is_fullscreen { 0.0_f32 } else { 12.0_f32 };
+        main_stack = main_stack.push(
+            container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_| iced::widget::container::Style {
+                    background: None,
+                    border: iced::Border {
+                        color: strict_color,
+                        width: design::layout::STRICT_BORDER_PX,
+                        radius: corner.into(),
+                    },
+                    text_color: None,
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                }),
+        );
+    }
+
+    // Floating address-bar overlays — absolutely positioned so they never
+    // affect layout of the tab bar or anything below (CSS position:absolute).
+    let bar_width = state.window_width * 0.40;
+    // top = traffic_light_spacer (38) + address bar (36) + gap (S2=4) = 78 px
+    let popup_top = 38.0 + design::layout::TOP_BAR_HEIGHT_PX + design::space::S2;
+
+    let strict_popup_visible = state.address_bar.view_strict_popup(bar_width).is_some();
+    let badge_popup_visible  = state.address_bar.badge.popover_open
+        && !state.address_bar.badge.rows.is_empty();
+
+    // Global drag capture: when a tab-bar or sidebar drag is active, push a
+    // full-window mouse_area that tracks cursor movement and mouse-up
+    // regardless of which widget is under the cursor. Without this, StripExited
+    // or leaving the sidebar boundary ends the drag prematurely.
+    // Only tab-bar drag needs global capture. Sidebar drag uses PillEntered
+    // for swapping — the global capture's on_move would intercept those events
+    // and break pill hover detection.
+    let any_drag_active = state.tab_bar.drag_active;
+    if any_drag_active {
+        main_stack = main_stack.push(
+            iced::widget::mouse_area(
+                container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(Message::GlobalDragMove)
+            .on_release(Message::GlobalDragEnd)
+            .interaction(iced::mouse::Interaction::Grab),
+        );
+    }
+
+    // Event blocker: when any floating popup is open, push a full-screen
+    // mouse_area BELOW the popup but ABOVE the tab strip. This captures
+    // cursor-moved events so the strip cannot update its hover/drag state
+    // while the popup is visible. Clicking outside the popup closes it.
+    if strict_popup_visible || badge_popup_visible {
+        let close_badge_msg: Message = if badge_popup_visible {
+            Message::AddressBar(crate::address_bar::AddressBarMsg::Badge(
+                crate::address_bar::BadgeEvent::PopoverClosed,
+            ))
+        } else {
+            Message::None
+        };
+        main_stack = main_stack.push(
+            iced::widget::mouse_area(
+                container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(|_| Message::None)
+            .on_press(close_badge_msg),
+        );
+    }
+
+    if let Some(popup) = state.address_bar.view_strict_popup(bar_width) {
+        main_stack = main_stack.push(
+            container(popup.map(Message::AddressBar))
+                .padding(iced::Padding::new(0.0).top(popup_top).left(sidebar_w))
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .height(Length::Shrink),
+        );
+    }
+
+    if let Some(popup) = state.address_bar.view_badge_popover(bar_width) {
+        main_stack = main_stack.push(
+            container(popup.map(Message::AddressBar))
+                .padding(iced::Padding::new(0.0).top(popup_top).left(sidebar_w))
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .height(Length::Shrink),
+        );
+    }
+
+    main_stack = main_stack.push(title_drag_zone());
+    main_stack = main_stack.push(traffic_lights_overlay());
+
+    container(main_stack)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// Invisible drag strip across the top of the frameless window.
+/// Clicking and dragging here moves the window via window::drag().
+fn title_drag_zone<'a>() -> Element<'a, Message> {
+    use iced::widget::mouse_area;
+    // Height matches traffic_light_spacer (38 px). Stops exactly at the address
+    // bar top so the drag overlay does not intercept address-bar mouse events.
+    const DRAG_H: f32 = 38.0;
+    mouse_area(
+        container(iced::widget::Space::new().width(Length::Fill).height(DRAG_H))
+            .width(Length::Fill),
+    )
+    .on_press(Message::DragWindow)
+    .into()
+}
+
+/// Three colored circles matching the macOS traffic-light style.
+/// Rendered identically on every OS (decorations: false).
+fn traffic_lights_overlay<'a>() -> Element<'a, Message> {
+    use iced::widget::container;
+    use iced::{Color, Padding};
+
+    let close = traffic_circle(Color::from_rgb(1.0, 0.373, 0.341), Message::CloseWindow);
+    let min   = traffic_circle(Color::from_rgb(0.996, 0.737, 0.180), Message::MinimizeWindow);
+    let max   = traffic_circle(Color::from_rgb(0.157, 0.784, 0.251), Message::MaximizeWindow);
+
+    let row = iced::widget::Row::new()
+        .push(close)
+        .push(iced::widget::Space::new().width(8.0))
+        .push(min)
+        .push(iced::widget::Space::new().width(8.0))
+        .push(max)
+        .align_y(iced::alignment::Vertical::Center);
+
+    container(row)
+        .padding(Padding::new(0.0).top(14.0).left(14.0))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(iced::alignment::Vertical::Top)
+        .align_x(iced::alignment::Horizontal::Left)
+        .into()
+}
+
+/// One 12×12 px circular button.
+fn traffic_circle<'a>(color: iced::Color, msg: Message) -> Element<'a, Message> {
+    use iced::widget::{button, container};
+    button(
+        container(iced::widget::Row::new()).width(12.0).height(12.0),
+    )
+    .width(12.0)
+    .height(12.0)
+    .padding(0)
+    .on_press(msg)
+    .style(move |_, _| iced::widget::button::Style {
+        background: Some(iced::Background::Color(color)),
+        border: iced::Border { radius: 99.0.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn title(state: &AppState) -> String {
@@ -303,16 +661,20 @@ fn theme(_state: &AppState) -> Theme {
 ///
 /// Standard: radial gradient centred slightly left of mid-window, deep navy.
 /// Strict:   warmer terracotta-tinted gradient + 2 px terracotta border.
-fn wallpaper_canvas(mode: Mode, reduced: bool) -> Canvas<WallpaperProgram, Message> {
+fn wallpaper_canvas(mode: Mode, reduced: bool, corner_radius: f32) -> Canvas<WallpaperProgram, Message> {
     Canvas::new(WallpaperProgram {
         mode,
         reduced_transparency: reduced,
+        corner_radius,
     })
 }
 
 struct WallpaperProgram {
     mode: Mode,
     reduced_transparency: bool,
+    /// 12 px when windowed (transparent corners produce rounded window),
+    /// 0 in fullscreen (fills the display edge-to-edge).
+    corner_radius: f32,
 }
 
 impl canvas::Program<Message> for WallpaperProgram {
@@ -328,19 +690,20 @@ impl canvas::Program<Message> for WallpaperProgram {
     ) -> Vec<canvas::Geometry<Renderer>> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
 
+        // Rounded rectangle — 12 px in windowed mode, 0 px in fullscreen.
+        // With transparent: true, pixels outside this path are transparent,
+        // which lets the desktop show through the window corners.
+        let radius = iced::border::Radius::from(self.corner_radius);
+        let bg_path = canvas::Path::rounded_rectangle(iced::Point::ORIGIN, bounds.size(), radius);
+
         match self.mode {
             Mode::Standard => {
                 if self.reduced_transparency {
                     // §3.4 solid fallback for Standard.
                     let [r, g, b, _] = design::palette::STANDARD_WALLPAPER_SOLID;
-                    frame.fill_rectangle(
-                        iced::Point::ORIGIN,
-                        bounds.size(),
-                        Color::from_rgba(r, g, b, 1.0),
-                    );
+                    frame.fill(&bg_path, Color::from_rgba(r, g, b, 1.0));
                 } else {
-                    // Deep navy linear gradient top-left → bottom-right
-                    // (tokens: bg_deep_dark_start → bg_deep_dark_end).
+                    // Deep navy linear gradient top-left → bottom-right.
                     let [sr, sg, sb, _] = design::palette::BG_DEEP_DARK_START;
                     let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
                     let grad = canvas_gradient::Linear::new(
@@ -349,20 +712,17 @@ impl canvas::Program<Message> for WallpaperProgram {
                     )
                     .add_stop(0.0, Color::from_rgb(sr, sg, sb))
                     .add_stop(1.0, Color::from_rgb(er, eg, eb));
-                    frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), grad);
+                    frame.fill(&bg_path, grad);
                 }
             }
             Mode::Strict => {
+                // The 2 px terracotta border is drawn as a container overlay
+                // in view() (above main_row) so it appears on top of the
+                // sidebar. Only the gradient wallpaper is drawn here.
                 if self.reduced_transparency {
-                    // §3.4 solid fallback for Strict.
                     let [r, g, b, _] = design::palette::STRICT_WALLPAPER_START;
-                    frame.fill_rectangle(
-                        iced::Point::ORIGIN,
-                        bounds.size(),
-                        Color::from_rgba(r, g, b, 1.0),
-                    );
+                    frame.fill(&bg_path, Color::from_rgba(r, g, b, 1.0));
                 } else {
-                    // Warmer terracotta-tinted gradient for Strict wallpaper.
                     let [sr, sg, sb, _] = design::palette::STRICT_WALLPAPER_START;
                     let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
                     let grad = canvas_gradient::Linear::new(
@@ -371,38 +731,8 @@ impl canvas::Program<Message> for WallpaperProgram {
                     )
                     .add_stop(0.0, Color::from_rgb(sr, sg, sb))
                     .add_stop(1.0, Color::from_rgb(er, eg, eb));
-                    frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), grad);
+                    frame.fill(&bg_path, grad);
                 }
-
-                // Strict border: 2 px terracotta border + inset glow (L42, mode-indicator.md).
-                let [br, bg, bb, _] = design::palette::STRICT;
-                let border_color = Color::from_rgb(br, bg, bb);
-                let border_px = design::layout::STRICT_BORDER_PX;
-
-                // Top edge
-                frame.fill_rectangle(
-                    iced::Point::ORIGIN,
-                    Size::new(bounds.width, border_px),
-                    border_color,
-                );
-                // Bottom edge
-                frame.fill_rectangle(
-                    iced::Point::new(0.0, bounds.height - border_px),
-                    Size::new(bounds.width, border_px),
-                    border_color,
-                );
-                // Left edge
-                frame.fill_rectangle(
-                    iced::Point::ORIGIN,
-                    Size::new(border_px, bounds.height),
-                    border_color,
-                );
-                // Right edge
-                frame.fill_rectangle(
-                    iced::Point::new(bounds.width - border_px, 0.0),
-                    Size::new(border_px, bounds.height),
-                    border_color,
-                );
             }
         }
 
@@ -415,16 +745,20 @@ impl canvas::Program<Message> for WallpaperProgram {
 // ---------------------------------------------------------------------------
 
 fn traffic_light_spacer<'a>() -> Element<'a, Message> {
-    // Reserve 14 px top padding so chrome doesn't overlap macOS traffic-lights.
+    // Reserve 38 px for macOS traffic-light buttons in frameless window mode.
+    // Matches mock sidebar top:38px — sidebar content and chrome align at the same row.
     container(text(""))
-        .height(Length::Fixed(design::layout::TRAFFIC_LIGHT_INSET_PX))
+        .height(Length::Fixed(38.0))
         .into()
 }
 
-/// Top-bar chrome placeholder. Replaced module-by-module as Phase 8 lands.
-/// Each line is a mount point comment tracking which module fills the slot.
+/// Top-bar chrome + optional tab strip (Top position only).
+/// Mount points filled module-by-module as Phase 8 lands.
 fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
-    // Module 43: address bar — centered horizontally in the top bar.
+    // Module 43: address bar — centered horizontally.
+    // height(Shrink): lets the address bar column expand downward when the
+    // strict-popup or suggestion dropdown is visible, instead of compressing
+    // the capsule because of column spacing inside a Fixed(36px) container.
     let address_bar = container(
         state
             .address_bar
@@ -432,13 +766,35 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
             .map(Message::AddressBar),
     )
     .width(Length::Fill)
-    .center_x(Length::Fill);
+    .center_x(Length::Fill)
+    .height(Length::Shrink);
 
-    // TODO Module 44 mount point: tab bar / identity capsule
+    // Module 44: identity capsule + tabs-pill — right-aligned overlay.
+    let top_chrome = container(state.tab_bar.view_top_chrome().map(Message::TabBar))
+        .width(Length::Fill)
+        .height(Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX));
+
+    // Stack overlays top chrome on top of the address bar so the address bar
+    // stays truly centered regardless of right-side pill widths.
+    let top_bar = iced::widget::Stack::new().push(address_bar).push(top_chrome);
+
     // TODO Module 46 mount point: new tab page
     // TODO Module 53 mount point: mode-switch popup
     // TODO Module 64 mount point: first-launch wizard overlay
-    Column::new().push(address_bar).into()
+
+    let mut col = Column::new().width(Length::Fill).push(top_bar);
+
+    if state.tab_bar.position == crate::tab_bar::TabBarPosition::Top {
+        let top_strip = state
+            .tab_bar
+            .view_strip(state.window_width)
+            .map(Message::TabBar);
+        col = col
+            .push(iced::widget::Space::new().height(design::space::S4))
+            .push(top_strip);
+    }
+
+    col.into()
 }
 
 // ---------------------------------------------------------------------------
@@ -453,22 +809,40 @@ pub fn run() -> iced::Result {
     iced::application(boot, update, view)
         .title(title)
         .theme(theme)
+        .style(app_style)
         .centered()
         .subscription(subscription)
         .window(window_settings())
         .run()
 }
+
+/// Application style. Forces a fully transparent root background so the
+/// wallpaper canvas (Stack base layer) is the only thing painting behind the
+/// chrome. Without this, Iced fills the root with the theme's default
+/// background color, which on macOS appears as a gray strip under the
+/// translucent titlebar in fullscreen.
+fn app_style(_state: &AppState, _theme: &Theme) -> iced::theme::Style {
+    iced::theme::Style {
+        background_color: Color::TRANSPARENT,
+        text_color: Color::WHITE,
+    }
+}
 fn subscription(_state: &AppState) -> iced::Subscription<Message> {
-    window::resize_events().map(|(_, size)| Message::WindowResized(size.width))
+    window::resize_events().map(|(id, size)| Message::WindowResized(id, size))
 }
 
 fn window_settings() -> window::Settings {
+    // Cross-platform frameless window. We draw our own traffic-light circles
+    // so the look is identical on macOS, Linux, and Windows.
+    // window::drag(id) handles window movement on all platforms via winit.
     window::Settings {
         size: Size::new(1280.0, 800.0),
         min_size: Some(Size::new(800.0, 600.0)),
         resizable: true,
-        decorations: true,
-        transparent: false,
+        decorations: false,
+        // transparent: true removes the system-drawn border/shadow that appears
+        // around frameless windows on macOS and some Linux compositors.
+        transparent: true,
         ..window::Settings::default()
     }
 }
@@ -476,6 +850,7 @@ fn window_settings() -> window::Settings {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
 
 #[cfg(test)]
 mod tests {

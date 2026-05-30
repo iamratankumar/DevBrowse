@@ -87,6 +87,20 @@ impl GlassPanel {
         }
     }
 
+    /// Construct a sidebar glass surface (Module 44.3).
+    /// blur 20 px, saturate 1.2, corner-radius 12 px (uniform in Iced v1).
+    pub fn sidebar(width: Length, height: Length, reduced_transparency: bool) -> Self {
+        Self {
+            tint_rgba: design::palette::GLASS_TINT_DARK,
+            blur_sigma_px: design::glass::SIDEBAR_BLUR_SIGMA,
+            saturate: design::glass::PANEL_SATURATE,
+            corner_radius_px: 12.0,
+            width,
+            height,
+            reduced_transparency,
+        }
+    }
+
     /// Produce the Iced widget. Wraps the canvas program in a sized container.
     pub fn view<'a, Message: 'a>(&self) -> Element<'a, Message> {
         let program = GlassProgram {
@@ -219,5 +233,12 @@ mod tests {
     fn corner_radius_panel_matches_panel_token() {
         let g = GlassPanel::panel(Length::Fill, Length::Fill, false);
         assert_eq!(g.corner_radius_px, design::radius::PANEL_PX);
+    }
+
+    #[test]
+    fn sidebar_glass_uses_sidebar_sigma() {
+        let g = GlassPanel::sidebar(Length::Fixed(52.0), Length::Fill, false);
+        assert_eq!(g.blur_sigma_px, design::glass::SIDEBAR_BLUR_SIGMA);
+        assert_eq!(g.corner_radius_px, 12.0);
     }
 }

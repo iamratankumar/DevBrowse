@@ -250,10 +250,14 @@ impl BadgeSlot {
         }
     }
 
-    /// Re-derive the badge mode when the browsing mode changes (e.g. user
-    /// toggles Standard <-> Strict while a page is loaded).
+    /// Re-derive the badge mode when the browsing mode changes.
     pub fn sync_mode(&mut self, browsing_mode: Mode) {
         self.mode = BadgeMode::from_mode_and_count(browsing_mode, self.block_count);
+        // Strict badge shows no clickable count pill, so close any open popover
+        // to avoid leaving it stuck with no affordance to dismiss it.
+        if browsing_mode == Mode::Strict {
+            self.popover_open = false;
+        }
     }
 }
 
@@ -433,6 +437,11 @@ pub struct AddressBar {
     pub current_url: String,
     /// True while the mouse is over the Convert-to-Strict chip (drives hover popup).
     convert_chip_hovered: bool,
+    /// True while the cursor is inside the strict hover popup (keeps it visible).
+    convert_popup_hovered: bool,
+    /// True during the 150 ms grace period after ConvertChipExited fires but
+    /// before we know whether the cursor is heading into the popup.
+    strict_popup_grace: bool,
 }
 
 impl std::fmt::Debug for AddressBar {
@@ -462,6 +471,8 @@ impl AddressBar {
             chip_state: ChipState::FreshTab,
             current_url: String::new(),
             convert_chip_hovered: false,
+            convert_popup_hovered: false,
+            strict_popup_grace: false,
         }
     }
 
@@ -479,7 +490,9 @@ impl AddressBar {
         }
         let mut bar = Self::new(Arc::new(NoopProvider), mode, "default".to_string());
         // Demo: seed 12 blocked trackers so the badge is visible during development.
-        // Removed when Module 21 (blocklist) fires real BlockIncrement events.
+        // TODO Module 21 wiring: replace with real ChromeCommand::BlockOccurred events;
+        // badge should only appear after a page navigation (NavigationCommitted). Remove
+        // this seed block entirely when Phase 11 wiring lands.
         for i in 0..12_u32 {
             bar.badge.update(BadgeEvent::BlockIncrement {
                 domain: format!("tracker{i}.io"),
@@ -844,87 +857,9 @@ impl AddressBar {
         };
 
         // Popup built separately — rendered below bar_element, not inside it.
-        let strict_popup: Option<Element<AddressBarMsg>> = if self.show_convert_chip()
-            && chip_hovered
-        {
-            let popup = container(
-                column![
-                    column![
-                        text("Strict mode (higher privacy)")
-                            .size(design::type_scale::BODY_LG_PX)
-                            .color(iced::Color::from_rgb(0.957, 0.729, 0.627)),
-                        text("recommended for banking, sensitive sites")
-                            .size(design::type_scale::BODY_SM_PX)
-                            .color(iced::Color::from_rgb(0.784, 0.659, 0.596)),
-                    ]
-                    .spacing(design::space::S1),
-                    text("Opens this page in a new tab with extra privacy protections. Original tab stays unchanged.")
-                        .size(design::type_scale::BODY_SM_PX)
-                        .color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
-                    column![
-                        row![
-                            text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                            text("Separate cookies & storage from this site").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
-                        ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
-                        row![
-                            text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                            text("No browsing history saved").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
-                        ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
-                        row![
-                            text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                            text("Maximum fingerprint protection").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
-                        ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(design::space::S2),
-                    container(
-                        row![
-                            text("\u{2139}").size(11.0).color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
-                            text("Close the tab to exit Strict mode")
-                                .size(design::type_scale::BODY_SM_PX)
-                                .color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
-                        ]
-                        .spacing(design::space::S2)
-                        .align_y(iced::alignment::Vertical::Center),
-                    )
-                    .padding([design::space::S3, design::space::S4])
-                    .style(move |_t| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, 0.15))),
-                        border: iced::Border { color: iced::Color::TRANSPARENT, width: 0.0, radius: design::radius::BUTTON_PX.into() },
-                        text_color: None,
-                        shadow: iced::Shadow::default(),
-                        snap: false,
-                    }),
-                ]
-                .spacing(design::space::S4),
-            )
-            .width(Length::Fixed(300.0))
-            .padding([design::space::S6, design::space::S6])
-            .style(move |_t| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgba(0.055, 0.071, 0.118, 0.96))),
-                border: iced::Border {
-                    color: iced::Color::from_rgba(sr, sg, sb, 0.40),
-                    width: 1.5,
-                    radius: design::radius::PANEL_PX.into(),
-                },
-                text_color: None,
-                shadow: iced::Shadow {
-                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.50),
-                    offset: iced::Vector::new(0.0, 24.0),
-                    blur_radius: 60.0,
-                },
-                snap: false,
-            });
-
-            // Right-align the popup within bar_width so it sits under the chip.
-            Some(
-                container(popup)
-                    .width(Length::Fixed(bar_width))
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .into(),
-            )
-        } else {
-            None
-        };
+        // strict_popup is now rendered as a floating overlay by the shell
+        // (shell.rs view() → view_strict_popup). Removed from the column here
+        // so it cannot push the tab bar or other content downward.
 
         // ---------- badge popover — tracker breakdown (blocked-counter.md) ----------
         // Renders below bar when badge.popover_open is true.
@@ -1168,10 +1103,18 @@ impl AddressBar {
         )
         .width(Length::Fixed(bar_width))
         .height(Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX))
-        // Shadow from mock: 0 12px 30px rgba(0,0,0,0.35)
         .style(move |_t| iced::widget::container::Style {
-            background: None,
-            border: iced::Border::default(),
+            // Must be Some (not None) — Iced skips the quad when background is None,
+            // which drops the shadow on re-renders triggered by hover events.
+            // TRANSPARENT gives Iced a real quad to attach the shadow to.
+            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+            // Width 0 so it's invisible, but radius must match CAPSULE_PX so the
+            // shadow renderer follows the rounded shape instead of drawing a rectangle.
+            border: iced::Border {
+                color: iced::Color::TRANSPARENT,
+                width: 0.0,
+                radius: design::radius::CAPSULE_PX.into(),
+            },
             text_color: None,
             shadow: iced::Shadow {
                 color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
@@ -1255,17 +1198,292 @@ impl AddressBar {
                 bar_element
             };
 
-        let base: Element<AddressBarMsg> = if let Some(bpop) = badge_popover {
-            column![base, bpop].spacing(design::space::S2).into()
-        } else {
-            base
+        // badge_popover is placed as a floating window-level overlay by the
+        // shell (shell.rs → view_badge_popover). Drop it here so it cannot
+        // push the tab bar or any other content downward.
+        let _ = badge_popover;
+        base
+    }
+
+    /// Returns the "Make it Strict" hover popup as a floating element, or `None`.
+    ///
+    /// The shell places this in the window-level Stack so it overlays content
+    /// without affecting the layout of the address bar or anything below it.
+    /// `bar_width` must match the value passed to `view()`.
+    pub fn view_strict_popup(&self, bar_width: f32) -> Option<Element<'_, AddressBarMsg>> {
+        // Keep popup visible while: hovering chip, cursor is inside popup, or
+        // the 150 ms grace period after chip-exit hasn't elapsed yet (lets slow
+        // users move cursor from chip to popup without it vanishing).
+        if !self.show_convert_chip()
+            || (!self.convert_chip_hovered
+                && !self.convert_popup_hovered
+                && !self.strict_popup_grace)
+        {
+            return None;
+        }
+        let [sr, sg, sb, _] = design::palette::STRICT;
+
+        let popup = container(
+            column![
+                column![
+                    text("Strict mode (higher privacy)")
+                        .size(design::type_scale::BODY_LG_PX)
+                        .color(iced::Color::from_rgb(0.957, 0.729, 0.627)),
+                    text("recommended for banking, sensitive sites")
+                        .size(design::type_scale::BODY_SM_PX)
+                        .color(iced::Color::from_rgb(0.784, 0.659, 0.596)),
+                ]
+                .spacing(design::space::S1),
+                text("Opens this page in a new tab with extra privacy protections. Original tab stays unchanged.")
+                    .size(design::type_scale::BODY_SM_PX)
+                    .color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                column![
+                    row![
+                        text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
+                        text("Separate cookies & storage from this site").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                    ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
+                    row![
+                        text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
+                        text("No browsing history saved").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                    ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
+                    row![
+                        text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
+                        text("Maximum fingerprint protection").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                    ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
+                ]
+                .spacing(design::space::S2),
+                container(
+                    row![
+                        text("\u{2139}").size(11.0).color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
+                        text("Close the tab to exit Strict mode")
+                            .size(design::type_scale::BODY_SM_PX)
+                            .color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
+                    ]
+                    .spacing(design::space::S2)
+                    .align_y(iced::alignment::Vertical::Center),
+                )
+                .padding([design::space::S3, design::space::S4])
+                .style(move |_t| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, 0.15))),
+                    border: iced::Border { color: iced::Color::TRANSPARENT, width: 0.0, radius: design::radius::BUTTON_PX.into() },
+                    text_color: None,
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                }),
+            ]
+            .spacing(design::space::S4),
+        )
+        .width(Length::Fixed(300.0))
+        .padding([design::space::S6, design::space::S6])
+        .style(move |_t| iced::widget::container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgba(0.055, 0.071, 0.118, 0.96))),
+            border: iced::Border {
+                color: iced::Color::from_rgba(sr, sg, sb, 0.40),
+                width: 1.5,
+                radius: design::radius::PANEL_PX.into(),
+            },
+            text_color: None,
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.50),
+                offset: iced::Vector::new(0.0, 24.0),
+                blur_radius: 60.0,
+            },
+            snap: false,
+        });
+
+        // Wrap in mouse_area so moving into the popup keeps it visible.
+        // ConvertPopupEntered/Exited update convert_popup_hovered in state.
+        Some(
+            iced::widget::mouse_area(
+                container(popup)
+                    .width(Length::Fixed(bar_width))
+                    .align_x(iced::alignment::Horizontal::Right),
+            )
+            .on_enter(AddressBarMsg::ConvertPopupEntered)
+            .on_exit(AddressBarMsg::ConvertPopupExited)
+            .into(),
+        )
+    }
+
+    /// Returns the tracker-count badge popover as a floating element, or `None`.
+    ///
+    /// The shell places this in the window-level Stack so it overlays content
+    /// without pushing the tab bar or other layout down.
+    pub fn view_badge_popover(&self, bar_width: f32) -> Option<Element<'_, AddressBarMsg>> {
+        if !self.badge.popover_open || self.badge.rows.is_empty() {
+            return None;
+        }
+        let [ar, ag, ab, _] = design::palette::ACCENT;
+        let [sr, sg, sb, _] = design::palette::STRICT;
+        let [mr, mg, mb, _] = design::palette::TEXT_MUTED_DARK;
+        let is_strict = self.mode == Mode::Strict;
+        let (pr, pg, pb) = if is_strict { (sr, sg, sb) } else { (ar, ag, ab) };
+        let pill_color = iced::Color::from_rgb(pr, pg, pb);
+
+        let total = self.badge.block_count;
+        let overflow = self.badge.rows.len().saturating_sub(10);
+
+        let domain_rows: Vec<Element<AddressBarMsg>> = self
+            .badge
+            .rows
+            .iter()
+            .take(10)
+            .map(|row| {
+                let domain = row.domain.clone();
+                let count = row.count;
+                container(
+                    iced::widget::row![
+                        text(domain)
+                            .size(design::type_scale::BODY_SM_PX)
+                            .color(iced::Color::from_rgb(0.847, 0.855, 0.878))
+                            .width(Length::Fill),
+                        container(
+                            text(count.to_string())
+                                .size(design::type_scale::LABEL_UPPER_PX)
+                                .color(pill_color),
+                        )
+                        .padding([1.0, design::space::S3])
+                        .style(move |_t| iced::widget::container::Style {
+                            background: Some(iced::Background::Color(
+                                iced::Color::from_rgba(pr, pg, pb, 0.16),
+                            )),
+                            border: iced::Border {
+                                color: iced::Color::from_rgba(pr, pg, pb, 0.30),
+                                width: 1.0,
+                                radius: design::radius::PILL_PX.into(),
+                            },
+                            text_color: None,
+                            shadow: iced::Shadow::default(),
+                            snap: false,
+                        }),
+                    ]
+                    .spacing(design::space::S3)
+                    .align_y(iced::alignment::Vertical::Center),
+                )
+                .padding([design::space::S2, design::space::S5])
+                .into()
+            })
+            .collect();
+
+        let header: Element<AddressBarMsg> = container(
+            iced::widget::row![
+                text(format!("{total} blocked"))
+                    .size(design::type_scale::BODY_LG_PX)
+                    .color(pill_color)
+                    .width(Length::Fill),
+                button(
+                    text("\u{00D7}")
+                        .size(14.0)
+                        .color(iced::Color::from_rgb(mr, mg, mb)),
+                )
+                .on_press(AddressBarMsg::Badge(BadgeEvent::PopoverClosed))
+                .padding([0.0, design::space::S1])
+                .style(move |_t, _s| iced::widget::button::Style {
+                    background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                    text_color: iced::Color::from_rgb(mr, mg, mb),
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                }),
+            ]
+            .align_y(iced::alignment::Vertical::Center),
+        )
+        .padding(iced::Padding {
+            top: design::space::S4,
+            right: design::space::S4,
+            bottom: design::space::S3,
+            left: design::space::S5,
+        })
+        .into();
+
+        let sep = |_: ()| -> Element<AddressBarMsg> {
+            container(text(""))
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(|_t| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        1.0, 0.98, 0.94, 0.07,
+                    ))),
+                    ..Default::default()
+                })
+                .into()
         };
 
-        if let Some(popup) = strict_popup {
-            column![base, popup].spacing(design::space::S2).into()
-        } else {
-            base
+        let mut col = column![header, sep(())].spacing(0.0);
+        col = col.push(column(domain_rows).spacing(0.0));
+        if overflow > 0 {
+            col = col.push(
+                container(
+                    text(format!("+ {overflow} more"))
+                        .size(design::type_scale::BODY_SM_PX)
+                        .color(iced::Color::from_rgb(mr, mg, mb)),
+                )
+                .padding([design::space::S2, design::space::S5]),
+            );
         }
+        col = col.push(sep(()));
+        col = col.push(
+            button(
+                text("Open Network Viewer \u{2192}")
+                    .size(design::type_scale::BODY_SM_PX)
+                    .color(pill_color),
+            )
+            .on_press(AddressBarMsg::NetworkViewerRequested)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: design::space::S3,
+                right: design::space::S4,
+                bottom: design::space::S3,
+                left: design::space::S5,
+            })
+            .style(move |_t, status| {
+                let bg_a = if matches!(
+                    status,
+                    iced::widget::button::Status::Hovered
+                        | iced::widget::button::Status::Pressed
+                ) {
+                    0.08_f32
+                } else {
+                    0.0_f32
+                };
+                iced::widget::button::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        pr, pg, pb, bg_a,
+                    ))),
+                    text_color: pill_color,
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                }
+            }),
+        );
+
+        let popup = container(col).width(Length::Fixed(280.0)).style(move |_t| {
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(iced::Color::from_rgba(
+                    0.055, 0.071, 0.118, 0.96,
+                ))),
+                border: iced::Border {
+                    color: iced::Color::from_rgba(ar, ag, ab, 0.25),
+                    width: 1.5,
+                    radius: design::radius::PANEL_PX.into(),
+                },
+                text_color: None,
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.50),
+                    offset: iced::Vector::new(0.0, 16.0),
+                    blur_radius: 40.0,
+                },
+                snap: false,
+            }
+        });
+
+        Some(
+            container(popup)
+                .width(Length::Fixed(bar_width))
+                .align_x(iced::alignment::Horizontal::Right)
+                .into(),
+        )
     }
 
     /// Split a URL into (domain, path) for Rest-state display.
@@ -1417,6 +1635,31 @@ impl AddressBar {
             }
             AddressBarMsg::ConvertChipExited => {
                 self.convert_chip_hovered = false;
+                self.strict_popup_grace = true;
+                // Start 150 ms grace period. If cursor enters popup before it
+                // fires, ConvertPopupEntered clears the pending flag. If not,
+                // StrictPopupGracePeriodEnd hides the popup.
+                let task = iced::Task::perform(
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    },
+                    |_| AddressBarMsg::StrictPopupGracePeriodEnd,
+                );
+                (None, task)
+            }
+            AddressBarMsg::ConvertPopupEntered => {
+                self.convert_popup_hovered = true;
+                self.strict_popup_grace = false; // grace period no longer needed
+                (None, Task::none())
+            }
+            AddressBarMsg::ConvertPopupExited => {
+                self.convert_popup_hovered = false;
+                (None, Task::none())
+            }
+            AddressBarMsg::StrictPopupGracePeriodEnd => {
+                self.strict_popup_grace = false;
+                // popup hides automatically if convert_chip_hovered and
+                // convert_popup_hovered are both false (view_strict_popup condition)
                 (None, Task::none())
             }
             AddressBarMsg::NetworkViewerRequested => {
@@ -1473,8 +1716,14 @@ pub enum AddressBarMsg {
     DismissConvertChip,
     /// Mouse entered the Convert-to-Strict chip — show the hover popup.
     ConvertChipEntered,
-    /// Mouse left the Convert-to-Strict chip — hide the hover popup.
+    /// Mouse left the Convert-to-Strict chip — starts a 150 ms grace timer.
     ConvertChipExited,
+    /// Mouse entered the strict hover popup — keeps popup visible.
+    ConvertPopupEntered,
+    /// Mouse left the strict hover popup — hide the popup.
+    ConvertPopupExited,
+    /// 150 ms grace timer fired after chip exit; hides popup if cursor is gone.
+    StrictPopupGracePeriodEnd,
     ModeChanged(Mode),
     ReducedMotionChanged(bool),
     /// URL pushed externally — show chip with 30 s auto-dismiss.
@@ -1494,6 +1743,7 @@ pub enum AddressBarEvent {
 }
 
 #[cfg(test)]
+#[allow(unused_must_use)]
 mod tests {
     use super::*;
 

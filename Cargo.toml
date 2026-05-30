@@ -91,7 +91,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # UI framework (Phase 8 — Module 42+)
 # iced 0.14 defaults to the wgpu renderer; the "wgpu" feature enables the
 # custom Shader widget used by pb-ui::glass.
-iced = { version = "0.14", features = ["wgpu", "canvas", "svg"] }
+iced = { version = "0.14", features = ["wgpu", "canvas", "svg", "tokio"] }
 # wgpu is pulled in by iced 0.14 at 27.x; we pin it here so pb-ui::glass
 # can use wgpu APIs directly without version skew.
 wgpu = "27"
