@@ -9,6 +9,7 @@ docs/design/
 mock/
 /CLAUDE.md
 
+
 # secrets — never commit
 .env
 .env.*

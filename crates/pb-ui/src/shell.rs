@@ -245,13 +245,13 @@ fn sync_active_tab_mode(state: &mut AppState) {
 pub(crate) fn ready_state_for_test() -> AppState {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
     let mut state = AppState::new("regression-user".to_string(), Arc::new(tx));
-    let _ = update(&mut state, Message::ProfileLoaded("regression-user".to_string()));
     let _ = update(
         &mut state,
-        Message::WindowResized(
-            iced::window::Id::unique(),
-            iced::Size::new(1440.0, 900.0),
-        ),
+        Message::ProfileLoaded("regression-user".to_string()),
+    );
+    let _ = update(
+        &mut state,
+        Message::WindowResized(iced::window::Id::unique(), iced::Size::new(1440.0, 900.0)),
     );
     state
 }
@@ -1097,4 +1097,3 @@ mod tests {
         assert_eq!(design::layout::STRICT_BORDER_PX, 2.0);
     }
 }
-

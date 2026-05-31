@@ -60,7 +60,10 @@ fn regression_view_stable_with_zero_tabs() {
     let mut state = ready_state_for_test();
     let ids: Vec<usize> = state.tab_bar.tabs.iter().map(|t| t.id).collect();
     for id in ids {
-        step(&mut state, Message::TabBar(TabBarMsg::TabCloseRequested(id)));
+        step(
+            &mut state,
+            Message::TabBar(TabBarMsg::TabCloseRequested(id)),
+        );
     }
     assert_view_stable(&state);
 }
@@ -93,7 +96,10 @@ fn regression_view_stable_after_drag() {
     let mut state = ready_state_for_test();
     let from_id = state.tab_bar.tabs[0].id;
     let to_id = state.tab_bar.tabs[1].id;
-    step(&mut state, Message::Sidebar(SidebarMsg::PillPressed(from_id)));
+    step(
+        &mut state,
+        Message::Sidebar(SidebarMsg::PillPressed(from_id)),
+    );
     step(&mut state, Message::Sidebar(SidebarMsg::SidebarMoved));
     step(&mut state, Message::Sidebar(SidebarMsg::PillEntered(to_id)));
     step(&mut state, Message::Sidebar(SidebarMsg::SidebarReleased));
@@ -128,7 +134,10 @@ fn regression_close_standard_tab_removes_it() {
         .unwrap()
         .id;
     let before = state.tab_bar.tabs.len();
-    step(&mut state, Message::TabBar(TabBarMsg::TabCloseRequested(id)));
+    step(
+        &mut state,
+        Message::TabBar(TabBarMsg::TabCloseRequested(id)),
+    );
     assert_eq!(state.tab_bar.tabs.len(), before - 1);
     assert!(!state.tab_bar.tabs.iter().any(|t| t.id == id));
 }
@@ -145,7 +154,10 @@ fn regression_tooltip_x_closes_standard_tab() {
         .unwrap()
         .id;
     let before = state.tab_bar.tabs.len();
-    step(&mut state, Message::Sidebar(SidebarMsg::PillClosePressed(id)));
+    step(
+        &mut state,
+        Message::Sidebar(SidebarMsg::PillClosePressed(id)),
+    );
     assert_eq!(state.tab_bar.tabs.len(), before - 1);
 }
 
@@ -160,8 +172,14 @@ fn regression_sidebar_pill_tap_activates_tab() {
         .find(|t| t.id != state.tab_bar.active_id)
         .unwrap()
         .id;
-    step(&mut state, Message::Sidebar(SidebarMsg::PillPressed(target_id)));
-    step(&mut state, Message::Sidebar(SidebarMsg::PillReleased(target_id)));
+    step(
+        &mut state,
+        Message::Sidebar(SidebarMsg::PillPressed(target_id)),
+    );
+    step(
+        &mut state,
+        Message::Sidebar(SidebarMsg::PillReleased(target_id)),
+    );
     assert_eq!(state.tab_bar.active_id, target_id);
 }
 
@@ -244,7 +262,10 @@ fn regression_sidebar_drag_reorders_tabs() {
     let mut state = ready_state_for_test();
     let from_id = state.tab_bar.tabs[0].id;
     let to_id = state.tab_bar.tabs[1].id;
-    step(&mut state, Message::Sidebar(SidebarMsg::PillPressed(from_id)));
+    step(
+        &mut state,
+        Message::Sidebar(SidebarMsg::PillPressed(from_id)),
+    );
     step(&mut state, Message::Sidebar(SidebarMsg::SidebarMoved));
     step(&mut state, Message::Sidebar(SidebarMsg::PillEntered(to_id)));
     assert_eq!(state.tab_bar.tabs[0].id, to_id);
@@ -277,7 +298,10 @@ fn regression_tap_does_not_reorder() {
 fn regression_strict_mode_locks_after_morph() {
     let mut state = ready_state_for_test();
     step(&mut state, Message::ConvertToStrict);
-    step(&mut state, Message::MorphTick(design::motion::MODE_CONVERT_MS));
+    step(
+        &mut state,
+        Message::MorphTick(design::motion::MODE_CONVERT_MS),
+    );
     assert_eq!(state.mode, Mode::Strict);
     assert_eq!(state.phase, AppPhase::Ready);
 }
