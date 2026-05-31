@@ -4,8 +4,8 @@
 use iced::widget::{button, column, container, row, text, Space};
 use iced::{Element, Length};
 
+use super::{StrictCloseModal, TabBar, TabBarMsg};
 use crate::design;
-use super::{TabBar, TabBarMsg, StrictCloseModal};
 
 impl TabBar {
     /// Returns the modal element when active, None when Hidden.
@@ -16,8 +16,8 @@ impl TabBar {
         }
 
         let [sr, sg, sb, _] = design::palette::STRICT;
-        let terracotta    = iced::Color::from_rgba(sr, sg, sb, 1.0);
-        let text_primary  = iced::Color::from_rgba(0.925, 0.929, 0.941, 1.0);
+        let terracotta = iced::Color::from_rgba(sr, sg, sb, 1.0);
+        let text_primary = iced::Color::from_rgba(0.925, 0.929, 0.941, 1.0);
         let text_secondary = iced::Color::from_rgba(0.847, 0.851, 0.878, 1.0);
 
         let header = row![
@@ -57,26 +57,31 @@ impl TabBar {
         .size(design::type_scale::BODY_PX)
         .color(text_secondary);
 
-        let cancel_btn =
-            button(text("Cancel").size(design::type_scale::BODY_PX).color(text_primary))
-                .on_press(TabBarMsg::StrictCloseCancelled)
-                .padding([design::space::S3, design::space::S6])
-                .style(move |_, _| button::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        1.0, 0.98, 0.94, 0.08,
-                    ))),
-                    border: iced::Border {
-                        color: iced::Color::from_rgba(1.0, 0.98, 0.94, 0.12),
-                        width: 1.0,
-                        radius: design::radius::BUTTON_PX.into(),
-                    },
-                    text_color: text_primary,
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                });
+        let cancel_btn = button(
+            text("Cancel")
+                .size(design::type_scale::BODY_PX)
+                .color(text_primary),
+        )
+        .on_press(TabBarMsg::StrictCloseCancelled)
+        .padding([design::space::S3, design::space::S6])
+        .style(move |_, _| button::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgba(
+                1.0, 0.98, 0.94, 0.08,
+            ))),
+            border: iced::Border {
+                color: iced::Color::from_rgba(1.0, 0.98, 0.94, 0.12),
+                width: 1.0,
+                radius: design::radius::BUTTON_PX.into(),
+            },
+            text_color: text_primary,
+            shadow: iced::Shadow::default(),
+            snap: false,
+        });
 
         let confirm_btn = button(
-            text("Close and discard").size(design::type_scale::BODY_PX).color(text_primary),
+            text("Close and discard")
+                .size(design::type_scale::BODY_PX)
+                .color(text_primary),
         )
         .on_press(TabBarMsg::StrictCloseConfirmed)
         .padding([design::space::S3, design::space::S6])

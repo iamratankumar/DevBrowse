@@ -216,6 +216,26 @@ fn boot() -> (AppState, Task<Message>) {
     (state, task)
 }
 
+/// Sync `state.mode` (and address bar / tab bar display) to the currently
+/// active tab's mode. Called whenever the active tab changes so the Strict
+/// border, wallpaper, and badge always reflect the tab you're looking at.
+fn sync_active_tab_mode(state: &mut AppState) {
+    if let Some(tab) = state
+        .tab_bar
+        .tabs
+        .iter()
+        .find(|t| t.id == state.tab_bar.active_id)
+    {
+        let new_mode = tab.mode;
+        if state.mode != new_mode {
+            state.mode = new_mode;
+            state.address_bar.sync_mode(new_mode);
+            let pname = state.profile_name().to_string();
+            state.tab_bar.sync_mode(new_mode, &pname);
+        }
+    }
+}
+
 fn update(state: &mut AppState, message: Message) -> Task<Message> {
     match message {
         Message::ProfileLoaded(name) => {
@@ -327,6 +347,7 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
             if let Some(event) = state.tab_bar.update(tb_msg) {
                 match event {
                     crate::tab_bar::TabBarEvent::TabClosed(_id) => {
+                        sync_active_tab_mode(state);
                         // TODO Module 44 wiring: notify pb-network::TabBroker (Phase 11, Module 80)
                     }
                     crate::tab_bar::TabBarEvent::NewTabRequested => {
@@ -337,17 +358,37 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
                             return window::drag(id);
                         }
                     }
+                    crate::tab_bar::TabBarEvent::StabilizeRequested(gen) => {
+                        // 400 ms from the *last* close. Each close stamps a new
+                        // generation; stale timers from earlier closes are
+                        // discarded when they fire with an outdated generation.
+                        return iced::Task::perform(
+                            async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                                gen
+                            },
+                            |g| Message::TabBar(crate::tab_bar::TabBarMsg::StabilizeExpired(g)),
+                        );
+                    }
                 }
             }
+            // StripPressed activates a tab without emitting a TabBarEvent.
+            // Sync unconditionally so switching tabs always updates the mode.
+            sync_active_tab_mode(state);
         }
         Message::Sidebar(sb_msg) => {
             if let Some(ev) = state.sidebar.update(sb_msg) {
                 match ev {
                     crate::sidebar::SidebarEvent::TabActivated(id) => {
-                        let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::TabActivated(id));
+                        let _ = state
+                            .tab_bar
+                            .update(crate::tab_bar::TabBarMsg::TabActivated(id));
+                        sync_active_tab_mode(state);
                     }
                     crate::sidebar::SidebarEvent::NewTabRequested => {
-                        let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::NewTabPressed);
+                        let _ = state
+                            .tab_bar
+                            .update(crate::tab_bar::TabBarMsg::NewTabPressed);
                     }
                     crate::sidebar::SidebarEvent::SearchRequested => {
                         // TODO Module 44.3 wiring: command bar pre-filled /tab (Module 64.13)
@@ -377,13 +418,17 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
             // Feed strip-local x into tab-bar drag while cursor is outside the strip.
             if state.tab_bar.drag_active {
                 let local_x = (pos.x - design::layout::SIDEBAR_COLLAPSED_PX).max(0.0);
-                let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::StripMoved(local_x));
+                let _ = state
+                    .tab_bar
+                    .update(crate::tab_bar::TabBarMsg::StripMoved(local_x));
             }
             // Sidebar: drag position tracked via PillEntered — no y update needed.
         }
         Message::GlobalDragEnd => {
             if state.tab_bar.drag_id.is_some() || state.tab_bar.drag_active {
-                let _ = state.tab_bar.update(crate::tab_bar::TabBarMsg::StripReleased);
+                let _ = state
+                    .tab_bar
+                    .update(crate::tab_bar::TabBarMsg::StripReleased);
             }
         }
         Message::None => {}
@@ -448,7 +493,11 @@ fn view(state: &AppState) -> Element<'_, Message> {
     // receives an undersized `bounds.height` and the glass appears clipped /
     // mis-positioned relative to the window.
     let main_row = iced::widget::Row::new()
-        .push(container(sidebar).width(Length::Fixed(sidebar_w)).height(Length::Fill))
+        .push(
+            container(sidebar)
+                .width(Length::Fixed(sidebar_w))
+                .height(Length::Fill),
+        )
         .push(content_column)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -477,22 +526,30 @@ fn view(state: &AppState) -> Element<'_, Message> {
     if state.mode == Mode::Strict {
         let [br, bg, bb, _] = design::palette::STRICT;
         let strict_color = Color::from_rgb(br, bg, bb);
-        let corner = if state.is_fullscreen { 0.0_f32 } else { 12.0_f32 };
+        let corner = if state.is_fullscreen {
+            0.0_f32
+        } else {
+            12.0_f32
+        };
         main_stack = main_stack.push(
-            container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(move |_| iced::widget::container::Style {
-                    background: None,
-                    border: iced::Border {
-                        color: strict_color,
-                        width: design::layout::STRICT_BORDER_PX,
-                        radius: corner.into(),
-                    },
-                    text_color: None,
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                }),
+            container(
+                iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| iced::widget::container::Style {
+                background: None,
+                border: iced::Border {
+                    color: strict_color,
+                    width: design::layout::STRICT_BORDER_PX,
+                    radius: corner.into(),
+                },
+                text_color: None,
+                shadow: iced::Shadow::default(),
+                snap: false,
+            }),
         );
     }
 
@@ -502,9 +559,8 @@ fn view(state: &AppState) -> Element<'_, Message> {
     // top = traffic_light_spacer (38) + address bar (36) + gap (S2=4) = 78 px
     let popup_top = 38.0 + design::layout::TOP_BAR_HEIGHT_PX + design::space::S2;
 
-    let strict_popup_visible = state.address_bar.view_strict_popup(bar_width).is_some();
-    let badge_popup_visible  = state.address_bar.badge.popover_open
-        && !state.address_bar.badge.rows.is_empty();
+    let badge_popup_visible =
+        state.address_bar.badge.popover_open && !state.address_bar.badge.rows.is_empty();
 
     // Global drag capture: when a tab-bar or sidebar drag is active, push a
     // full-window mouse_area that tracks cursor movement and mouse-up
@@ -517,9 +573,13 @@ fn view(state: &AppState) -> Element<'_, Message> {
     if any_drag_active {
         main_stack = main_stack.push(
             iced::widget::mouse_area(
-                container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
+                container(
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill),
             )
             .on_move(Message::GlobalDragMove)
             .on_release(Message::GlobalDragEnd)
@@ -531,7 +591,10 @@ fn view(state: &AppState) -> Element<'_, Message> {
     // mouse_area BELOW the popup but ABOVE the tab strip. This captures
     // cursor-moved events so the strip cannot update its hover/drag state
     // while the popup is visible. Clicking outside the popup closes it.
-    if strict_popup_visible || badge_popup_visible {
+    // Blocker only for badge popup — clicking outside closes it.
+    // Strict popup does NOT need a blocker: its chip button must remain
+    // clickable through the Stack, and the popup has its own action button.
+    if badge_popup_visible {
         let close_badge_msg: Message = if badge_popup_visible {
             Message::AddressBar(crate::address_bar::AddressBarMsg::Badge(
                 crate::address_bar::BadgeEvent::PopoverClosed,
@@ -541,9 +604,13 @@ fn view(state: &AppState) -> Element<'_, Message> {
         };
         main_stack = main_stack.push(
             iced::widget::mouse_area(
-                container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
+                container(
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill),
             )
             .on_move(|_| Message::None)
             .on_press(close_badge_msg),
@@ -587,8 +654,12 @@ fn title_drag_zone<'a>() -> Element<'a, Message> {
     // bar top so the drag overlay does not intercept address-bar mouse events.
     const DRAG_H: f32 = 38.0;
     mouse_area(
-        container(iced::widget::Space::new().width(Length::Fill).height(DRAG_H))
-            .width(Length::Fill),
+        container(
+            iced::widget::Space::new()
+                .width(Length::Fill)
+                .height(DRAG_H),
+        )
+        .width(Length::Fill),
     )
     .on_press(Message::DragWindow)
     .into()
@@ -601,8 +672,14 @@ fn traffic_lights_overlay<'a>() -> Element<'a, Message> {
     use iced::{Color, Padding};
 
     let close = traffic_circle(Color::from_rgb(1.0, 0.373, 0.341), Message::CloseWindow);
-    let min   = traffic_circle(Color::from_rgb(0.996, 0.737, 0.180), Message::MinimizeWindow);
-    let max   = traffic_circle(Color::from_rgb(0.157, 0.784, 0.251), Message::MaximizeWindow);
+    let min = traffic_circle(
+        Color::from_rgb(0.996, 0.737, 0.180),
+        Message::MinimizeWindow,
+    );
+    let max = traffic_circle(
+        Color::from_rgb(0.157, 0.784, 0.251),
+        Message::MaximizeWindow,
+    );
 
     let row = iced::widget::Row::new()
         .push(close)
@@ -624,19 +701,20 @@ fn traffic_lights_overlay<'a>() -> Element<'a, Message> {
 /// One 12×12 px circular button.
 fn traffic_circle<'a>(color: iced::Color, msg: Message) -> Element<'a, Message> {
     use iced::widget::{button, container};
-    button(
-        container(iced::widget::Row::new()).width(12.0).height(12.0),
-    )
-    .width(12.0)
-    .height(12.0)
-    .padding(0)
-    .on_press(msg)
-    .style(move |_, _| iced::widget::button::Style {
-        background: Some(iced::Background::Color(color)),
-        border: iced::Border { radius: 99.0.into(), ..Default::default() },
-        ..Default::default()
-    })
-    .into()
+    button(container(iced::widget::Row::new()).width(12.0).height(12.0))
+        .width(12.0)
+        .height(12.0)
+        .padding(0)
+        .on_press(msg)
+        .style(move |_, _| iced::widget::button::Style {
+            background: Some(iced::Background::Color(color)),
+            border: iced::Border {
+                radius: 99.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn title(state: &AppState) -> String {
@@ -661,7 +739,11 @@ fn theme(_state: &AppState) -> Theme {
 ///
 /// Standard: radial gradient centred slightly left of mid-window, deep navy.
 /// Strict:   warmer terracotta-tinted gradient + 2 px terracotta border.
-fn wallpaper_canvas(mode: Mode, reduced: bool, corner_radius: f32) -> Canvas<WallpaperProgram, Message> {
+fn wallpaper_canvas(
+    mode: Mode,
+    reduced: bool,
+    corner_radius: f32,
+) -> Canvas<WallpaperProgram, Message> {
     Canvas::new(WallpaperProgram {
         mode,
         reduced_transparency: reduced,
@@ -747,9 +829,7 @@ impl canvas::Program<Message> for WallpaperProgram {
 fn traffic_light_spacer<'a>() -> Element<'a, Message> {
     // Reserve 38 px for macOS traffic-light buttons in frameless window mode.
     // Matches mock sidebar top:38px — sidebar content and chrome align at the same row.
-    container(text(""))
-        .height(Length::Fixed(38.0))
-        .into()
+    container(text("")).height(Length::Fixed(38.0)).into()
 }
 
 /// Top-bar chrome + optional tab strip (Top position only).
@@ -776,7 +856,9 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
 
     // Stack overlays top chrome on top of the address bar so the address bar
     // stays truly centered regardless of right-side pill widths.
-    let top_bar = iced::widget::Stack::new().push(address_bar).push(top_chrome);
+    let top_bar = iced::widget::Stack::new()
+        .push(address_bar)
+        .push(top_chrome);
 
     // TODO Module 46 mount point: new tab page
     // TODO Module 53 mount point: mode-switch popup
@@ -850,7 +932,6 @@ fn window_settings() -> window::Settings {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 mod tests {

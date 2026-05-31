@@ -58,7 +58,10 @@ pub enum SidebarEvent {
     TabActivated(usize),
     WindowDragRequested,
     /// Drag-to-reorder: swap the two tab positions in tab_bar.tabs.
-    TabsReordered { from_id: usize, to_id: usize },
+    TabsReordered {
+        from_id: usize,
+        to_id: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -146,10 +149,10 @@ impl Sidebar {
                     None
                 }
             }
-            SidebarMsg::SearchPressed    => Some(SidebarEvent::SearchRequested),
+            SidebarMsg::SearchPressed => Some(SidebarEvent::SearchRequested),
             SidebarMsg::FavoritesPressed => Some(SidebarEvent::FavoritesRequested),
-            SidebarMsg::GearPressed      => Some(SidebarEvent::GearRequested),
-            SidebarMsg::NewTabPressed    => Some(SidebarEvent::NewTabRequested),
+            SidebarMsg::GearPressed => Some(SidebarEvent::GearRequested),
+            SidebarMsg::NewTabPressed => Some(SidebarEvent::NewTabRequested),
         }
     }
 }
@@ -189,27 +192,29 @@ impl Sidebar {
         // the canvas's internal y-offset. This is the only way to guarantee
         // the glass top edge lands at y=38 regardless of how the parent Row /
         // Stack distribute height.
-        let glass_canvas = canvas(SidebarBgProgram { reduced_transparency })
-            .width(Length::Fixed(w))
-            .height(Length::Fill);
+        let glass_canvas = canvas(SidebarBgProgram {
+            reduced_transparency,
+        })
+        .width(Length::Fixed(w))
+        .height(Length::Fill);
 
         // ── Avatar ────────────────────────────────────────────────────────
         let avatar = canvas(AvatarProgram).width(26.0).height(26.0);
 
         // ── Search icon (SVG magnifying glass) ───────────────────────────────
-        let search_svg = iced::widget::svg(
-            iced::widget::svg::Handle::from_memory(
-                include_bytes!("../assets/search.svg").as_ref(),
-            ),
-        )
+        let search_svg = iced::widget::svg(iced::widget::svg::Handle::from_memory(
+            include_bytes!("../assets/search.svg").as_ref(),
+        ))
         .width(18.0)
         .height(18.0)
-        .style(|_, _| iced::widget::svg::Style { color: Some(ICON_MUTED) });
+        .style(|_, _| iced::widget::svg::Style {
+            color: Some(ICON_MUTED),
+        });
         let search_btn = icon_btn_svg(search_svg, SidebarMsg::SearchPressed);
 
         // ── Tab pills ─────────────────────────────────────────────────────
         let standard_tabs: Vec<_> = tabs.iter().filter(|t| t.mode == Mode::Standard).collect();
-        let strict_tabs: Vec<_>   = tabs.iter().filter(|t| t.mode == Mode::Strict).collect();
+        let strict_tabs: Vec<_> = tabs.iter().filter(|t| t.mode == Mode::Strict).collect();
 
         // Compute how much vertical space is available for pills so they
         // shrink proportionally instead of overflowing and pushing + button down.
@@ -252,7 +257,11 @@ impl Sidebar {
         let drag_id = self.drag_id;
         let drag_hovered_id = self.drag_hovered_id;
         let make_pill = |t: &&crate::tab_bar::TabEntry| {
-            let h = if t.id == active_tab_id { active_h } else { inactive_h };
+            let h = if t.id == active_tab_id {
+                active_h
+            } else {
+                inactive_h
+            };
             tab_pill(PillProps {
                 tab_id: t.id,
                 mode: t.mode,
@@ -262,7 +271,7 @@ impl Sidebar {
                 dragging,
                 accent_color: t.accent_color,
                 is_being_dragged: dragging && drag_id == Some(t.id),
-                is_drag_target:   dragging && drag_hovered_id == Some(t.id),
+                is_drag_target: dragging && drag_hovered_id == Some(t.id),
             })
         };
 
@@ -272,9 +281,12 @@ impl Sidebar {
         if !strict_tabs.is_empty() {
             pill_items.push(
                 container(iced::widget::Row::new())
-                    .width(18.0).height(1.0)
+                    .width(18.0)
+                    .height(1.0)
                     .style(|_| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.98, 0.94, 0.10))),
+                        background: Some(iced::Background::Color(Color::from_rgba(
+                            1.0, 0.98, 0.94, 0.10,
+                        ))),
                         ..Default::default()
                     })
                     .into(),
@@ -284,21 +296,42 @@ impl Sidebar {
             }
         }
 
-        let pill_col = pill_items.into_iter()
-            .fold(column![].spacing(actual_spacing).align_x(Alignment::Center), |col, item| col.push(item));
+        let pill_col = pill_items.into_iter().fold(
+            column![].spacing(actual_spacing).align_x(Alignment::Center),
+            |col, item| col.push(item),
+        );
         let pill_area = pill_col;
 
         // ── Bottom-pinned actions ─────────────────────────────────────────
-        let favorites_btn = icon_btn(text("\u{2605}").size(18.0).color(ICON_MUTED), SidebarMsg::FavoritesPressed);
-        let gear_btn      = icon_btn(text("\u{2699}").size(18.0).color(ICON_MUTED), SidebarMsg::GearPressed);
+        let favorites_btn = icon_btn(
+            text("\u{2605}").size(18.0).color(ICON_MUTED),
+            SidebarMsg::FavoritesPressed,
+        );
+        let gear_btn = icon_btn(
+            text("\u{2699}").size(18.0).color(ICON_MUTED),
+            SidebarMsg::GearPressed,
+        );
 
         let plus_btn = iced::widget::button(
-            container(text("+").size(16.0).color(CHAMPAGNE)).width(30.0).height(30.0).center_x(30.0).center_y(30.0),
+            container(text("+").size(16.0).color(CHAMPAGNE))
+                .width(30.0)
+                .height(30.0)
+                .center_x(30.0)
+                .center_y(30.0),
         )
-        .width(30.0).height(30.0).padding(0).on_press(SidebarMsg::NewTabPressed)
+        .width(30.0)
+        .height(30.0)
+        .padding(0)
+        .on_press(SidebarMsg::NewTabPressed)
         .style(|_, _| iced::widget::button::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(0.788, 0.659, 0.471, 0.20))),
-            border: iced::Border { color: Color::from_rgba(0.788, 0.659, 0.471, 0.45), width: 1.0, radius: 8.0.into() },
+            background: Some(iced::Background::Color(Color::from_rgba(
+                0.788, 0.659, 0.471, 0.20,
+            ))),
+            border: iced::Border {
+                color: Color::from_rgba(0.788, 0.659, 0.471, 0.45),
+                width: 1.0,
+                radius: 8.0.into(),
+            },
             ..Default::default()
         });
 
@@ -307,18 +340,32 @@ impl Sidebar {
         // of the top chrome bar. The GLASS_TOP reserve lives in the outer
         // Column, not here.
         let content = column![
-            Space::new().width(Length::Fixed(w)).height(design::layout::TOP_BAR_HEIGHT_PX),
-            container(avatar).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            Space::new()
+                .width(Length::Fixed(w))
+                .height(design::layout::TOP_BAR_HEIGHT_PX),
+            container(avatar)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(8.0),
-            container(search_btn).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            container(search_btn)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(8.0),
-            container(pill_area).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            container(pill_area)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(Length::Fill),
-            container(favorites_btn).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            container(favorites_btn)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(2.0),
-            container(gear_btn).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            container(gear_btn)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(6.0),
-            container(plus_btn).width(Length::Fixed(w)).center_x(Length::Fixed(w)),
+            container(plus_btn)
+                .width(Length::Fixed(w))
+                .center_x(Length::Fixed(w)),
             Space::new().width(Length::Fixed(w)).height(18.0),
         ]
         .width(Length::Fixed(w))
@@ -330,7 +377,11 @@ impl Sidebar {
         // bounded by the outer Column below — so its top edge is at y=38.
         let glass_stack = iced::widget::Stack::new()
             .push(glass_canvas)
-            .push(container(content).width(Length::Fixed(w)).height(Length::Fill))
+            .push(
+                container(content)
+                    .width(Length::Fixed(w))
+                    .height(Length::Fill),
+            )
             .width(Length::Fixed(w))
             .height(Length::Fill);
 
@@ -346,12 +397,9 @@ impl Sidebar {
         // optional bottom_pad (tab strip zone). The glass_stack only ever
         // sees the region between those reserves, so the glass top edge is
         // guaranteed to land at y=38 in window coordinates.
-        let mut outer = column![
-            title_zone,
-            glass_stack,
-        ]
-        .width(Length::Fixed(w))
-        .height(Length::Fill);
+        let mut outer = column![title_zone, glass_stack,]
+            .width(Length::Fixed(w))
+            .height(Length::Fill);
 
         if bottom_pad > 0.0 {
             outer = outer.push(Space::new().width(Length::Fixed(w)).height(bottom_pad));
@@ -483,7 +531,17 @@ struct PillProps {
 }
 
 fn tab_pill(p: PillProps) -> iced::Element<'static, SidebarMsg> {
-    let PillProps { tab_id, mode, active, height, sidebar_w, dragging, accent_color, is_being_dragged, is_drag_target } = p;
+    let PillProps {
+        tab_id,
+        mode,
+        active,
+        height,
+        sidebar_w,
+        dragging,
+        accent_color,
+        is_being_dragged,
+        is_drag_target,
+    } = p;
     use iced::widget::{container, mouse_area};
     use iced::Length;
 
@@ -511,12 +569,27 @@ fn tab_pill(p: PillProps) -> iced::Element<'static, SidebarMsg> {
     // width to the left of the sidebar boundary, show a "tear off" affordance and
     // on mouse-release open the dragged tab in a new window via window::open().
 
+    // Active pill: same blue glow as the active tab chip in the strip.
+    let indicator_shadow = if active && !is_being_dragged {
+        iced::Shadow {
+            color: iced::Color::from_rgba(0.357, 0.553, 0.937, 0.45),
+            offset: iced::Vector::new(0.0, 0.0),
+            blur_radius: 10.0,
+        }
+    } else {
+        iced::Shadow::default()
+    };
+
     let indicator = container(iced::widget::Row::new())
         .width(indicator_w)
         .height(height)
         .style(move |_| iced::widget::container::Style {
             background: Some(iced::Background::Color(indicator_color)),
-            border: iced::Border { radius: 99.0.into(), ..Default::default() },
+            border: iced::Border {
+                radius: 99.0.into(),
+                ..Default::default()
+            },
+            shadow: indicator_shadow,
             ..Default::default()
         });
 
@@ -562,7 +635,7 @@ impl<Message> iced::widget::canvas::Program<Message> for AvatarProgram {
         let mut frame = Frame::new(renderer, bounds.size());
         let cx = bounds.width / 2.0;
         let cy = bounds.height / 2.0;
-        let r  = cx.min(cy);
+        let r = cx.min(cy);
         let circle = Path::circle(Point::new(cx, cy), r);
         frame.fill(&circle, Color::from_rgb(0.788, 0.659, 0.471)); // #c9a878 champagne
         vec![frame.into_geometry()]
@@ -573,23 +646,34 @@ impl<Message> iced::widget::canvas::Program<Message> for AvatarProgram {
 // Color + widget helpers
 // ---------------------------------------------------------------------------
 
-const ICON_MUTED: iced::Color = iced::Color { r: 0.541, g: 0.553, b: 0.588, a: 1.0 }; // #8a8d96
-const CHAMPAGNE:  iced::Color = iced::Color { r: 0.788, g: 0.659, b: 0.471, a: 1.0 }; // #c9a878
+const ICON_MUTED: iced::Color = iced::Color {
+    r: 0.541,
+    g: 0.553,
+    b: 0.588,
+    a: 1.0,
+}; // #8a8d96
+const CHAMPAGNE: iced::Color = iced::Color {
+    r: 0.788,
+    g: 0.659,
+    b: 0.471,
+    a: 1.0,
+}; // #c9a878
 
 fn pill_color(mode: Mode, active: bool, accent_color: Option<[f32; 4]>) -> iced::Color {
     use iced::Color;
     match (mode, active) {
-        (Mode::Strict, _) => {
-            let [r, g, b, _] = design::palette::STRICT;
-            Color::from_rgb(r, g, b)
-        }
-        (Mode::Standard, true) => {
+        // Active pill always uses standard blue regardless of mode.
+        (_, true) => {
             let [r, g, b, _] = design::palette::STANDARD_ACTIVE;
             Color::from_rgb(r, g, b)
         }
+        // Inactive strict: terracotta so it stays visually distinct.
+        (Mode::Strict, false) => {
+            let [r, g, b, _] = design::palette::STRICT;
+            Color::from_rgb(r, g, b)
+        }
+        // Inactive standard: favicon accent or neutral tint.
         (Mode::Standard, false) => {
-            // Use site favicon accent color at low opacity so inactive pills
-            // are distinguishable at a glance. Fall back to neutral white tint.
             if let Some([r, g, b, _]) = accent_color {
                 Color::from_rgba(r, g, b, 0.55)
             } else {
@@ -618,10 +702,7 @@ fn icon_btn<'a>(icon: iced::widget::Text<'a>, msg: SidebarMsg) -> iced::Element<
 }
 
 /// 32×32 px transparent icon button for SVG icons.
-fn icon_btn_svg<'a>(
-    icon: iced::widget::Svg<'a>,
-    msg: SidebarMsg,
-) -> iced::Element<'a, SidebarMsg> {
+fn icon_btn_svg<'a>(icon: iced::widget::Svg<'a>, msg: SidebarMsg) -> iced::Element<'a, SidebarMsg> {
     use iced::widget::{button, container};
     button(
         container(icon)
@@ -684,18 +765,27 @@ mod tests {
     #[test]
     fn sidebar_search_emits_event() {
         let mut s = super::Sidebar::new();
-        assert_eq!(s.update(super::SidebarMsg::SearchPressed), Some(super::SidebarEvent::SearchRequested));
+        assert_eq!(
+            s.update(super::SidebarMsg::SearchPressed),
+            Some(super::SidebarEvent::SearchRequested)
+        );
     }
 
     #[test]
     fn sidebar_new_tab_emits_event() {
         let mut s = super::Sidebar::new();
-        assert_eq!(s.update(super::SidebarMsg::NewTabPressed), Some(super::SidebarEvent::NewTabRequested));
+        assert_eq!(
+            s.update(super::SidebarMsg::NewTabPressed),
+            Some(super::SidebarEvent::NewTabRequested)
+        );
     }
 
     #[test]
     fn sidebar_gear_emits_event() {
         let mut s = super::Sidebar::new();
-        assert_eq!(s.update(super::SidebarMsg::GearPressed), Some(super::SidebarEvent::GearRequested));
+        assert_eq!(
+            s.update(super::SidebarMsg::GearPressed),
+            Some(super::SidebarEvent::GearRequested)
+        );
     }
 }

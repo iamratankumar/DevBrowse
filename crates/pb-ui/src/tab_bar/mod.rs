@@ -94,6 +94,11 @@ pub enum TabBarMsg {
     // Counter pill hover target — no action.
     Noop,
 
+    /// Stabilization timer expired. The u32 is the generation it was scheduled
+    /// for; if it doesn't match the current generation it is a stale timer from
+    /// a previous close and is silently discarded.
+    StabilizeExpired(u32),
+
     // Kept for tests — not emitted by the view.
     TabActivated(usize),
     TabCloseRequested(usize),
@@ -107,6 +112,9 @@ pub enum TabBarEvent {
     NewTabRequested,
     /// User clicked empty strip space — shell should call window::drag().
     WindowDragRequested,
+    /// Strip X-button close fired; shell must schedule a 400 ms StabilizeExpired
+    /// carrying this generation number.
+    StabilizeRequested(u32),
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +142,16 @@ pub struct TabBar {
     pub(crate) drag_active: bool,
     /// X at which the last swap happened; prevents immediate oscillation back.
     pub(crate) drag_last_swap_x: f32,
+    /// Tab close stabilization: holds (active_px, other_px) at their pre-close
+    /// values for 400 ms after each strip X-button close, so X buttons stay
+    /// under the cursor and the user can keep clicking without chasing them.
+    /// Cleared immediately when the cursor leaves the strip or the timer fires.
+    pub(crate) frozen_chip_px: Option<(f32, f32)>,
+    /// Monotonically increasing counter — incremented on every strip close.
+    /// StabilizeExpired carries the generation it was scheduled for; if it
+    /// doesn't match the current value the timer is stale and discarded.
+    /// This makes the 400 ms window always measure from the *last* close.
+    pub(crate) stabilize_generation: u32,
 }
 
 impl std::fmt::Debug for TabBar {
@@ -168,6 +186,8 @@ impl TabBar {
             drag_start_x: 0.0,
             drag_active: false,
             drag_last_swap_x: 0.0,
+            frozen_chip_px: None,
+            stabilize_generation: 0,
         }
     }
 
@@ -259,7 +279,17 @@ impl TabBar {
 impl TabBar {
     /// Per-tab pixel widths. Active tab gets preferred space; others share equally.
     /// Returns (active_px, other_px).
+    /// When `frozen_chip_px` is set (stabilization active), inactive chips use
+    /// the frozen width so X buttons don't drift while the user keeps clicking.
     fn chip_widths(&self) -> (f32, f32) {
+        // Stabilization freeze: return the exact pre-close widths so neither
+        // active nor inactive chips change size while the user is clicking X.
+        if let Some((frozen_active, frozen_other)) = self.frozen_chip_px {
+            if self.tabs.is_empty() {
+                return (0.0, 0.0);
+            }
+            return (frozen_active, frozen_other);
+        }
         let n = self.tabs.len();
         if n == 0 {
             return (0.0, 0.0);
@@ -269,11 +299,9 @@ impl TabBar {
         const ACTIVE_MIN_PX: f32 = 80.0;
         let row_pad = design::space::S4 * 2.0;
         let total_spacing = SPACING * (n as f32 - 1.0);
-        let available = (self.window_width
-            - design::layout::SIDEBAR_COLLAPSED_PX
-            - row_pad
-            - total_spacing)
-            .max(0.0);
+        let available =
+            (self.window_width - design::layout::SIDEBAR_COLLAPSED_PX - row_pad - total_spacing)
+                .max(0.0);
         let equal_px = available / n as f32;
 
         if n == 1 {
@@ -306,7 +334,11 @@ impl TabBar {
         let mut x = design::space::S4;
         let mut out = Vec::with_capacity(self.tabs.len());
         for tab in &self.tabs {
-            let w = if tab.id == self.active_id { active_px } else { other_px };
+            let w = if tab.id == self.active_id {
+                active_px
+            } else {
+                other_px
+            };
             out.push((tab.id, x, w));
             x += w + 1.0;
         }
@@ -333,17 +365,29 @@ impl TabBar {
         }
         // Clamp to edges when dragging fast past the strip boundaries.
         if let Some((_, x_start, _)) = positions.first() {
-            if x < *x_start { return Some(0); }
+            if x < *x_start {
+                return Some(0);
+            }
         }
         if let Some((_, x_start, w)) = positions.last() {
-            if x >= x_start + w { return Some(positions.len().saturating_sub(1)); }
+            if x >= x_start + w {
+                return Some(positions.len().saturating_sub(1));
+            }
         }
         None
     }
 
     fn cursor_in_close_zone(&self) -> bool {
-        let Some(id) = self.hovered_tab_id else { return false };
-        if self.tabs.iter().find(|t| t.id == id).map(|t| t.is_pinned).unwrap_or(true) {
+        let Some(id) = self.hovered_tab_id else {
+            return false;
+        };
+        if self
+            .tabs
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.is_pinned)
+            .unwrap_or(true)
+        {
             return false;
         }
         for (tab_id, x_start, w) in self.tab_positions() {
@@ -404,7 +448,8 @@ impl TabBar {
                 };
                 if self.cursor_in_close_zone() {
                     self.drag_id = None;
-                    return self.update(TabBarMsg::TabCloseRequested(id));
+                    // from_strip=true: freeze chips and request the 200 ms timer.
+                    return self.close_tab(id, true);
                 }
                 self.active_id = id;
                 self.drag_id = Some(id);
@@ -423,6 +468,8 @@ impl TabBar {
             }
             TabBarMsg::StripExited => {
                 self.hovered_tab_id = None;
+                // Cursor left the strip — snap to final widths immediately.
+                self.frozen_chip_px = None;
                 // During an active drag the shell's global-capture mouse_area tracks
                 // cursor position and calls StripReleased on mouse-up no matter where
                 // the cursor is. Do NOT clear drag state here or the tab snaps to its
@@ -448,12 +495,13 @@ impl TabBar {
                         return None;
                     }
                 }
-                self.close_tab(id)
+                // from_strip=false: keyboard/programmatic close, no stabilization.
+                self.close_tab(id, false)
             }
             TabBarMsg::StrictCloseConfirmed => {
                 if let StrictCloseModal::Confirming(id) = self.modal {
                     self.modal = StrictCloseModal::Hidden;
-                    return self.close_tab(id);
+                    return self.close_tab(id, false);
                 }
                 None
             }
@@ -462,7 +510,13 @@ impl TabBar {
                 None
             }
             TabBarMsg::NewTabPressed => {
-                let new_id = self.tabs.iter().map(|t| t.id).max().map(|m| m + 1).unwrap_or(0);
+                let new_id = self
+                    .tabs
+                    .iter()
+                    .map(|t| t.id)
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(0);
                 self.tabs.push(TabEntry {
                     id: new_id,
                     title: format!("New Tab {}", new_id + 1),
@@ -479,30 +533,51 @@ impl TabBar {
                 Some(TabBarEvent::NewTabRequested)
             }
             TabBarMsg::Noop => None,
+            TabBarMsg::StabilizeExpired(gen) => {
+                // Discard if a newer close has already superseded this timer.
+                if gen == self.stabilize_generation {
+                    self.frozen_chip_px = None;
+                }
+                None
+            }
         }
     }
 
-    fn close_tab(&mut self, id: usize) -> Option<TabBarEvent> {
+    fn close_tab(&mut self, id: usize, from_strip: bool) -> Option<TabBarEvent> {
         // Determine successor before removal: prefer right neighbour, fall back
         // to left (when closing the last tab), fall back to 0 (no tabs left).
         let successor = if self.active_id == id {
             let idx = self.tabs.iter().position(|t| t.id == id).unwrap_or(0);
-            self.tabs.get(idx + 1)
+            self.tabs
+                .get(idx + 1)
                 .or_else(|| self.tabs.get(idx.saturating_sub(1)))
                 .map(|t| t.id)
         } else {
             None
         };
+
+        if from_strip {
+            // Freeze BOTH widths at their pre-close values so no chip changes
+            // size while the user is clicking. Bump the generation so any
+            // in-flight timer from a previous close is discarded when it fires.
+            let (active_px, other_px) = self.chip_widths();
+            self.frozen_chip_px = Some((active_px, other_px));
+            self.stabilize_generation = self.stabilize_generation.wrapping_add(1);
+        }
+
         self.tabs.retain(|t| t.id != id);
         if self.active_id == id {
-            self.active_id = successor.unwrap_or_else(|| {
-                self.tabs.first().map(|t| t.id).unwrap_or(0)
-            });
+            self.active_id =
+                successor.unwrap_or_else(|| self.tabs.first().map(|t| t.id).unwrap_or(0));
         }
-        // Re-evaluate hover from the last known cursor position so the tab
-        // that shifted into the closed tab's slot immediately shows its X button.
+        // Re-evaluate hover so the chip now under the cursor shows its X button.
         self.hovered_tab_id = self.tab_id_at_x(self.cursor_strip_x);
-        Some(TabBarEvent::TabClosed(id))
+
+        if from_strip {
+            Some(TabBarEvent::StabilizeRequested(self.stabilize_generation))
+        } else {
+            Some(TabBarEvent::TabClosed(id))
+        }
     }
 }
 
@@ -535,7 +610,11 @@ mod tests {
     #[test]
     fn stub_has_one_strict_tab_with_unsaved_input() {
         let tb = TabBar::new(TabBarPosition::Bottom);
-        let n = tb.tabs.iter().filter(|t| t.mode == Mode::Strict && t.has_unsaved_input).count();
+        let n = tb
+            .tabs
+            .iter()
+            .filter(|t| t.mode == Mode::Strict && t.has_unsaved_input)
+            .count();
         assert_eq!(n, 1);
     }
 
@@ -550,7 +629,11 @@ mod tests {
     #[test]
     fn close_strict_tab_no_unsaved_emits_immediately() {
         let mut tb = TabBar::new(TabBarPosition::Bottom);
-        tb.tabs.iter_mut().find(|t| t.id == 4).unwrap().has_unsaved_input = false;
+        tb.tabs
+            .iter_mut()
+            .find(|t| t.id == 4)
+            .unwrap()
+            .has_unsaved_input = false;
         let event = tb.update(TabBarMsg::TabCloseRequested(4));
         assert!(matches!(event, Some(TabBarEvent::TabClosed(4))));
     }
@@ -621,8 +704,14 @@ mod tests {
     fn drag_reorder_does_not_change_mode() {
         let mut tb = TabBar::new(TabBarPosition::Bottom);
         tb.tabs.swap(2, 4);
-        assert_eq!(tb.tabs.iter().find(|t| t.id == 4).unwrap().mode, Mode::Strict);
-        assert_eq!(tb.tabs.iter().find(|t| t.id == 2).unwrap().mode, Mode::Standard);
+        assert_eq!(
+            tb.tabs.iter().find(|t| t.id == 4).unwrap().mode,
+            Mode::Strict
+        );
+        assert_eq!(
+            tb.tabs.iter().find(|t| t.id == 2).unwrap().mode,
+            Mode::Standard
+        );
     }
 
     #[test]
@@ -675,7 +764,7 @@ mod tests {
     fn all_tabs_get_equal_fill_width() {
         let tb = TabBar::new(TabBarPosition::Bottom);
         let row_pad = design::space::S4 * 2.0;
-        let spacing = (tb.tab_count() as f32 - 1.0);
+        let spacing = tb.tab_count() as f32 - 1.0;
         let available = 1280.0_f32 - design::layout::SIDEBAR_COLLAPSED_PX - row_pad - spacing;
         let per_tab = available / tb.tab_count() as f32;
         assert!(per_tab > 80.0, "got {per_tab}");

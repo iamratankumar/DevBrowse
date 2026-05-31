@@ -518,6 +518,11 @@ impl AddressBar {
     pub fn sync_mode(&mut self, mode: Mode) {
         self.mode = mode;
         self.badge.sync_mode(mode);
+        // Clear transient popup state so switching tabs never auto-opens
+        // the convert chip popup on the newly active tab.
+        self.convert_chip_hovered = false;
+        self.convert_popup_hovered = false;
+        self.strict_popup_grace = false;
     }
 
     /// Renders the floating URL bar as an Iced element.
@@ -1097,7 +1102,12 @@ impl AddressBar {
                     container(inner)
                         .width(Length::Fill)
                         .center_y(Length::Fill)
-                        .padding(iced::Padding { top: 0.0, right: design::space::S4, bottom: 0.0, left: design::space::S4 }),
+                        .padding(iced::Padding {
+                            top: 0.0,
+                            right: design::space::S4,
+                            bottom: 0.0,
+                            left: design::space::S4,
+                        }),
                 )
                 .push(border_ring),
         )
@@ -1270,6 +1280,29 @@ impl AddressBar {
                     shadow: iced::Shadow::default(),
                     snap: false,
                 }),
+                iced::widget::button(
+                    iced::widget::container(
+                        text("Make it Strict")
+                            .size(design::type_scale::BODY_LG_PX)
+                            .color(iced::Color::from_rgb(0.957, 0.729, 0.627)),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .padding([design::space::S3, design::space::S4]),
+                )
+                .on_press(AddressBarMsg::ConvertToStrictClicked)
+                .width(Length::Fill)
+                .padding(0)
+                .style(move |_t, status| {
+                    let a = if matches!(status, iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed) { 0.28_f32 } else { 0.18_f32 };
+                    iced::widget::button::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, a))),
+                        border: iced::Border { color: iced::Color::from_rgba(sr, sg, sb, 0.50), width: 1.0, radius: design::radius::BUTTON_PX.into() },
+                        text_color: iced::Color::from_rgb(0.957, 0.729, 0.627),
+                        shadow: iced::Shadow::default(),
+                        snap: false,
+                    }
+                }),
             ]
             .spacing(design::space::S4),
         )
@@ -1317,7 +1350,11 @@ impl AddressBar {
         let [sr, sg, sb, _] = design::palette::STRICT;
         let [mr, mg, mb, _] = design::palette::TEXT_MUTED_DARK;
         let is_strict = self.mode == Mode::Strict;
-        let (pr, pg, pb) = if is_strict { (sr, sg, sb) } else { (ar, ag, ab) };
+        let (pr, pg, pb) = if is_strict {
+            (sr, sg, sb)
+        } else {
+            (ar, ag, ab)
+        };
         let pill_color = iced::Color::from_rgb(pr, pg, pb);
 
         let total = self.badge.block_count;
@@ -1344,9 +1381,9 @@ impl AddressBar {
                         )
                         .padding([1.0, design::space::S3])
                         .style(move |_t| iced::widget::container::Style {
-                            background: Some(iced::Background::Color(
-                                iced::Color::from_rgba(pr, pg, pb, 0.16),
-                            )),
+                            background: Some(iced::Background::Color(iced::Color::from_rgba(
+                                pr, pg, pb, 0.16
+                            ),)),
                             border: iced::Border {
                                 color: iced::Color::from_rgba(pr, pg, pb, 0.30),
                                 width: 1.0,
@@ -1439,8 +1476,7 @@ impl AddressBar {
             .style(move |_t, status| {
                 let bg_a = if matches!(
                     status,
-                    iced::widget::button::Status::Hovered
-                        | iced::widget::button::Status::Pressed
+                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
                 ) {
                     0.08_f32
                 } else {

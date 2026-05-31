@@ -4,17 +4,22 @@
 use iced::widget::{container, mouse_area, row, text, Space};
 use iced::{Element, Length};
 
+use super::{TabBar, TabBarMsg, TabEntry};
 use crate::design;
 use crate::shell::Mode;
-use super::{TabBar, TabBarMsg, TabEntry};
 
 // ── Tab strip tunables ────────────────────────────────────────────────────────
-const BORDER_STANDARD: iced::Color = iced::Color { r: 0.1516, g: 0.1898, b: 0.235, a: 1.0 };
+const BORDER_STANDARD: iced::Color = iced::Color {
+    r: 0.1516,
+    g: 0.1898,
+    b: 0.235,
+    a: 1.0,
+};
 const BORDER_STRICT_ALPHA: f32 = 0.70;
-const STRIP_RADIUS: f32   =  0.0;   // corner radius of the strip bar itself
-const CHIP_RADIUS: f32    = 20.0;   // corner radius of individual tab chips
-const STRIP_H_MARGIN: f32 =  0.0;  // horizontal gap between strip and window edge
-// ─────────────────────────────────────────────────────────────────────────────
+const STRIP_RADIUS: f32 = 0.0; // corner radius of the strip bar itself
+const CHIP_RADIUS: f32 = 20.0; // corner radius of individual tab chips
+const STRIP_H_MARGIN: f32 = 0.0; // horizontal gap between strip and window edge
+                                 // ─────────────────────────────────────────────────────────────────────────────
 
 impl TabBar {
     /// Sticky horizontal chip row. Hidden when ≤ 1 tab open.
@@ -29,7 +34,12 @@ impl TabBar {
         let prominent = |id: usize| {
             self.hovered_tab_id == Some(id)
                 || self.active_id == id
-                || self.tabs.iter().find(|t| t.id == id).map(|t| t.mode == Mode::Strict).unwrap_or(false)
+                || self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map(|t| t.mode == Mode::Strict)
+                    .unwrap_or(false)
         };
 
         // 1px pipe: visible when show=true, invisible 1px spacer when false.
@@ -85,30 +95,42 @@ impl TabBar {
                 ..Default::default()
             });
 
-        let strip_with_margin = container(mouse_area(strip)
-            .on_move(|pos| TabBarMsg::StripMoved(pos.x))
-            .on_press(TabBarMsg::StripPressed)
-            .on_release(TabBarMsg::StripReleased)
-            .on_exit(TabBarMsg::StripExited)
-            .interaction(if self.drag_active {
-                iced::mouse::Interaction::Grab
-            } else {
-                iced::mouse::Interaction::Pointer
-            }))
-            .width(Length::Fill)
-            .padding(iced::Padding { top: 0.0, bottom: 0.0, left: STRIP_H_MARGIN, right: STRIP_H_MARGIN });
+        let strip_with_margin = container(
+            mouse_area(strip)
+                .on_move(|pos| TabBarMsg::StripMoved(pos.x))
+                .on_press(TabBarMsg::StripPressed)
+                .on_release(TabBarMsg::StripReleased)
+                .on_exit(TabBarMsg::StripExited)
+                .interaction(if self.drag_active {
+                    iced::mouse::Interaction::Grab
+                } else {
+                    iced::mouse::Interaction::Pointer
+                }),
+        )
+        .width(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            bottom: 0.0,
+            left: STRIP_H_MARGIN,
+            right: STRIP_H_MARGIN,
+        });
 
         strip_with_margin.into()
     }
 
     /// Renders a single tab chip. Width is the explicit pixel width from tab_positions().
     /// `is_dragged` is true while this chip is being repositioned by drag.
-    pub(crate) fn chip<'a>(&'a self, tab: &'a TabEntry, chip_width: f32, is_dragged: bool) -> Element<'a, TabBarMsg> {
+    pub(crate) fn chip<'a>(
+        &'a self,
+        tab: &'a TabEntry,
+        chip_width: f32,
+        is_dragged: bool,
+    ) -> Element<'a, TabBarMsg> {
         let is_hovered = self.hovered_tab_id == Some(tab.id);
-        let is_active  = self.active_id == tab.id;
+        let is_active = self.active_id == tab.id;
         // Active tab always shows title + X regardless of width.
         let show_title = is_active || chip_width >= 80.0;
-        let is_strict  = tab.mode == Mode::Strict;
+        let is_strict = tab.mode == Mode::Strict;
 
         let text_color = if is_strict {
             iced::Color::from_rgba(0.847, 0.722, 0.627, 1.0)
@@ -119,7 +141,9 @@ impl TabBar {
         };
 
         let fav: Element<'_, TabBarMsg> = container(
-            text(&tab.favicon_label).size(10.0).color(iced::Color::WHITE),
+            text(&tab.favicon_label)
+                .size(10.0)
+                .color(iced::Color::WHITE),
         )
         .width(16.0)
         .height(16.0)
@@ -149,7 +173,10 @@ impl TabBar {
                             design::palette::ACCENT[2],
                             1.0,
                         ))),
-                        border: iced::Border { radius: 2.5.into(), ..Default::default() },
+                        border: iced::Border {
+                            radius: 2.5.into(),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     })
                     .into()
@@ -159,7 +186,9 @@ impl TabBar {
 
             let close_slot: Element<'_, TabBarMsg> = if is_hovered && !tab.is_pinned {
                 container(
-                    text("\u{00d7}").size(13.0).color(iced::Color::from_rgba(0.75, 0.75, 0.75, 1.0)),
+                    text("\u{00d7}")
+                        .size(13.0)
+                        .color(iced::Color::from_rgba(0.75, 0.75, 0.75, 1.0)),
                 )
                 .width(18.0)
                 .height(18.0)
@@ -169,7 +198,10 @@ impl TabBar {
                     background: Some(iced::Background::Color(iced::Color::from_rgba(
                         1.0, 1.0, 1.0, 0.10,
                     ))),
-                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 })
                 .into()
@@ -214,30 +246,64 @@ impl TabBar {
 
         let bg = if is_dragged {
             // Lifted "ghost" appearance: stronger fill signals the chip is moving.
-            if is_strict { iced::Color::from_rgba(sr, sg, sb, 0.50) }
-            else         { iced::Color::from_rgba(0.357, 0.553, 0.937, 0.40) }
+            if is_strict {
+                iced::Color::from_rgba(sr, sg, sb, 0.50)
+            } else {
+                iced::Color::from_rgba(0.357, 0.553, 0.937, 0.40)
+            }
         } else if is_active {
-            if is_strict { iced::Color::from_rgba(sr, sg, sb, 0.22) }
-            else         { iced::Color::from_rgba(0.357, 0.553, 0.937, 0.18) }
+            // Active tab always uses standard blue bg regardless of mode.
+            iced::Color::from_rgba(0.357, 0.553, 0.937, 0.18)
         } else if is_hovered {
-            if is_strict { iced::Color::from_rgba(sr, sg, sb, 0.14) }
-            else         { iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08) }
+            if is_strict {
+                iced::Color::from_rgba(sr, sg, sb, 0.14)
+            } else {
+                iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+            }
         } else if is_strict {
-            iced::Color::from_rgba(sr, sg, sb, 0.07)
+            // Inactive strict: slightly stronger fill so it reads as distinct.
+            iced::Color::from_rgba(sr, sg, sb, 0.12)
         } else {
             iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0)
         };
 
         let strict_border = iced::Color::from_rgba(sr, sg, sb, BORDER_STRICT_ALPHA);
-        let (border_color, border_width) = if is_dragged {
-            // Bright border marks the chip being repositioned.
-            if is_strict { (strict_border, 1.5_f32) }
-            else         { (iced::Color::from_rgba(0.357, 0.553, 0.937, 1.0), 1.5_f32) }
-        } else if is_active || is_hovered {
-            if is_strict { (strict_border, 1.0_f32) }
-            else         { (BORDER_STANDARD, 1.0_f32) }
+
+        // Glassy active border: bright highlight colour + accent glow shadow
+        // simulates the top-light / depth effect of a glass gradient border.
+        let (border_color, border_width, chip_shadow) = if is_dragged {
+            if is_strict {
+                (strict_border, 1.5_f32, iced::Shadow::default())
+            } else {
+                (
+                    iced::Color::from_rgba(0.357, 0.553, 0.937, 1.0),
+                    1.5_f32,
+                    iced::Shadow::default(),
+                )
+            }
+        } else if is_active {
+            // Active always uses the same glassy blue border regardless of mode.
+            (
+                iced::Color::from_rgba(0.58, 0.74, 1.0, 0.88),
+                1.0_f32,
+                iced::Shadow {
+                    color: iced::Color::from_rgba(0.357, 0.553, 0.937, 0.45),
+                    offset: iced::Vector::new(0.0, 0.0),
+                    blur_radius: 10.0,
+                },
+            )
+        } else if is_hovered {
+            if is_strict {
+                (strict_border, 1.0_f32, iced::Shadow::default())
+            } else {
+                (BORDER_STANDARD, 1.0_f32, iced::Shadow::default())
+            }
         } else {
-            (iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0), 0.0_f32)
+            (
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0),
+                0.0_f32,
+                iced::Shadow::default(),
+            )
         };
 
         container(inner)
@@ -251,6 +317,7 @@ impl TabBar {
                     width: border_width,
                     radius: CHIP_RADIUS.into(),
                 },
+                shadow: chip_shadow,
                 ..Default::default()
             })
             .into()
