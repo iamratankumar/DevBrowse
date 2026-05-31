@@ -89,6 +89,10 @@ fn emit_palette(out: &mut String, p: &serde_json::Value) {
         "status_danger",
         "strict_wallpaper_start",
         "standard_wallpaper_solid",
+        "standard_wallpaper_light_start",
+        "standard_wallpaper_light_end",
+        "strict_wallpaper_light_start",
+        "strict_wallpaper_light_end",
     ] {
         if let Some(hex) = p[key].as_str() {
             let const_name = key.to_uppercase();
