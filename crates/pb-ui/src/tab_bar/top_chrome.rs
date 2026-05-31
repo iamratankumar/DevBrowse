@@ -217,31 +217,36 @@ impl TabBar {
             }
         }
 
-        let plus_btn: Element<'_, TabBarMsg> = chrome_tip("New tab", button(
-            container(
-                text("+")
-                    .size(18.0)
-                    .color(Color::from_rgba(0.690, 0.706, 0.745, 1.0)),
+        let plus_btn: Element<'_, TabBarMsg> = chrome_tip(
+            "New tab",
+            button(
+                container(
+                    text("+")
+                        .size(18.0)
+                        .color(Color::from_rgba(0.690, 0.706, 0.745, 1.0)),
+                )
+                .width(PILL_BTN_SIZE)
+                .height(PILL_BTN_SIZE)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center),
             )
+            .on_press(TabBarMsg::NewTabPressed)
             .width(PILL_BTN_SIZE)
             .height(PILL_BTN_SIZE)
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center),
-        )
-        .on_press(TabBarMsg::NewTabPressed)
-        .width(PILL_BTN_SIZE)
-        .height(PILL_BTN_SIZE)
-        .padding(0)
-        .style(pill_btn_style)
-        .into());
+            .padding(0)
+            .style(pill_btn_style)
+            .into(),
+        );
 
         // Canvas tabs-button: 2 redraws per hover cycle, zero subscriptions.
         let tabs_btn: Element<'_, TabBarMsg> = chrome_tip(
             "Tab card view",
-            iced::widget::canvas(TabsCanvas { count: count as u32 })
-                .width(Length::Fixed(PILL_BTN_SIZE))
-                .height(Length::Fixed(PILL_BTN_SIZE))
-                .into(),
+            iced::widget::canvas(TabsCanvas {
+                count: count as u32,
+            })
+            .width(Length::Fixed(PILL_BTN_SIZE))
+            .height(Length::Fixed(PILL_BTN_SIZE))
+            .into(),
         );
 
         let tabs_pill = container(
@@ -338,12 +343,18 @@ fn chrome_tip<'a>(label: &'static str, el: Element<'a, TabBarMsg>) -> Element<'a
     let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
         .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
         .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
-    let card = container(
-        text(label)
-            .size(12.0)
-            .color(Color { r: 0.933, g: 0.941, b: 0.961, a: 1.0 }),
-    )
-    .padding(iced::Padding { top: 5.0, right: 8.0, bottom: 5.0, left: 8.0 })
+    let card = container(text(label).size(12.0).color(Color {
+        r: 0.933,
+        g: 0.941,
+        b: 0.961,
+        a: 1.0,
+    }))
+    .padding(iced::Padding {
+        top: 5.0,
+        right: 8.0,
+        bottom: 5.0,
+        left: 8.0,
+    })
     .style(move |_| iced::widget::container::Style {
         background: Some(Background::Gradient(Gradient::Linear(bg))),
         border: Border {

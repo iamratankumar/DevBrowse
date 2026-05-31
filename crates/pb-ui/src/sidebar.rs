@@ -199,8 +199,14 @@ impl Sidebar {
         const MIN_INACTIVE_H: f32 = 3.0;
         let active_h = 26.0_f32;
 
-        let standard_tabs: Vec<_> = tabs.iter().filter(|t| t.mode == crate::shell::Mode::Standard).collect();
-        let strict_tabs: Vec<_> = tabs.iter().filter(|t| t.mode == crate::shell::Mode::Strict).collect();
+        let standard_tabs: Vec<_> = tabs
+            .iter()
+            .filter(|t| t.mode == crate::shell::Mode::Standard)
+            .collect();
+        let strict_tabs: Vec<_> = tabs
+            .iter()
+            .filter(|t| t.mode == crate::shell::Mode::Strict)
+            .collect();
 
         let n_pills = tabs.len();
         let n_dividers = usize::from(!strict_tabs.is_empty());
@@ -227,9 +233,8 @@ impl Sidebar {
         };
 
         // pill_area starts at: GLASS_TOP + TOP_BAR_HEIGHT + avatar(26) + gap(8) + search(32) + gap(8)
-        let pill_area_top = GLASS_TOP
-            + crate::design::layout::TOP_BAR_HEIGHT_PX
-            + 26.0 + 8.0 + 32.0 + 8.0;
+        let pill_area_top =
+            GLASS_TOP + crate::design::layout::TOP_BAR_HEIGHT_PX + 26.0 + 8.0 + 32.0 + 8.0;
 
         // Walk the rendered order: standard pills, divider, strict pills.
         let mut y = pill_area_top;
@@ -311,7 +316,10 @@ impl Sidebar {
         .style(|_, _| iced::widget::svg::Style {
             color: Some(ICON_MUTED),
         });
-        let search_btn = sidebar_chrome_tip("Search tabs", icon_btn_svg(search_svg, SidebarMsg::SearchPressed));
+        let search_btn = sidebar_chrome_tip(
+            "Search tabs",
+            icon_btn_svg(search_svg, SidebarMsg::SearchPressed),
+        );
 
         // ── Tab pills ─────────────────────────────────────────────────────
         let standard_tabs: Vec<_> = tabs.iter().filter(|t| t.mode == Mode::Standard).collect();
@@ -408,11 +416,17 @@ impl Sidebar {
         // ── Bottom-pinned actions ─────────────────────────────────────────
         let favorites_btn = sidebar_chrome_tip(
             "Bookmarks",
-            icon_btn(text("\u{2605}").size(18.0).color(ICON_MUTED), SidebarMsg::FavoritesPressed),
+            icon_btn(
+                text("\u{2605}").size(18.0).color(ICON_MUTED),
+                SidebarMsg::FavoritesPressed,
+            ),
         );
         let gear_btn = sidebar_chrome_tip(
             "Settings",
-            icon_btn(text("\u{2699}").size(18.0).color(ICON_MUTED), SidebarMsg::GearPressed),
+            icon_btn(
+                text("\u{2699}").size(18.0).color(ICON_MUTED),
+                SidebarMsg::GearPressed,
+            ),
         );
 
         let plus_btn = sidebar_chrome_tip(
@@ -769,7 +783,12 @@ const CHAMPAGNE: iced::Color = iced::Color {
     a: 1.0,
 }; // #c9a878
 
-fn pill_color(mode: Mode, active: bool, accent_color: Option<[f32; 4]>, is_hovered: bool) -> iced::Color {
+fn pill_color(
+    mode: Mode,
+    active: bool,
+    accent_color: Option<[f32; 4]>,
+    is_hovered: bool,
+) -> iced::Color {
     use iced::Color;
     match (mode, active) {
         // Active pill always uses standard blue regardless of mode.
@@ -794,14 +813,23 @@ fn pill_color(mode: Mode, active: bool, accent_color: Option<[f32; 4]>, is_hover
 }
 
 /// Read-only glass tooltip shown below a sidebar chrome button.
-fn sidebar_chrome_tip<'a>(label: &'static str, el: iced::Element<'a, SidebarMsg>) -> iced::Element<'a, SidebarMsg> {
+fn sidebar_chrome_tip<'a>(
+    label: &'static str,
+    el: iced::Element<'a, SidebarMsg>,
+) -> iced::Element<'a, SidebarMsg> {
     use iced::widget::{container, text, tooltip};
-    let card = container(
-        text(label)
-            .size(12.0)
-            .color(iced::Color { r: 0.933, g: 0.941, b: 0.961, a: 1.0 }),
-    )
-    .padding(iced::Padding { top: 5.0, right: 8.0, bottom: 5.0, left: 8.0 })
+    let card = container(text(label).size(12.0).color(iced::Color {
+        r: 0.933,
+        g: 0.941,
+        b: 0.961,
+        a: 1.0,
+    }))
+    .padding(iced::Padding {
+        top: 5.0,
+        right: 8.0,
+        bottom: 5.0,
+        left: 8.0,
+    })
     .style(|_| tip_card_style());
     tooltip(el, card, tooltip::Position::Right)
         .gap(8.0)
@@ -1013,7 +1041,12 @@ pub fn tooltip_card_element(meta: TabTip) -> iced::Element<'static, SidebarMsg> 
         .spacing(10.0)
         .align_y(Alignment::Center),
     )
-    .padding(Padding { top: 8.0, right: 10.0, bottom: 8.0, left: 10.0 })
+    .padding(Padding {
+        top: 8.0,
+        right: 10.0,
+        bottom: 8.0,
+        left: 10.0,
+    })
     .style(|_| tip_card_style());
 
     // on_enter cancels the pending hide so cursor can move freely from pill to card.
@@ -1110,7 +1143,10 @@ mod tests {
     #[test]
     fn tooltip_tip_card_has_background() {
         let style = super::tip_card_style();
-        assert!(style.background.is_some(), "card must have a non-transparent background");
+        assert!(
+            style.background.is_some(),
+            "card must have a non-transparent background"
+        );
     }
 
     #[test]

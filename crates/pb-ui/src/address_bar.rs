@@ -614,13 +614,16 @@ impl AddressBar {
         // Forward is dim when there is no forward history (stub — always dim for now).
         let nav_fwd = chrome_tip("Next page", nav_btn("\u{203A}", icon_dim).into());
 
-        let nav_divider: Element<AddressBarMsg> =
-            container(text("|").size(12.0).color(iced::Color::from_rgba(1.0, 0.98, 0.94, 0.20)))
-                .width(Length::Fixed(12.0))
-                .height(Length::Fixed(nav_h))
-                .center_x(Length::Fixed(12.0))
-                .center_y(Length::Fixed(nav_h))
-                .into();
+        let nav_divider: Element<AddressBarMsg> = container(
+            text("|")
+                .size(12.0)
+                .color(iced::Color::from_rgba(1.0, 0.98, 0.94, 0.20)),
+        )
+        .width(Length::Fixed(12.0))
+        .height(Length::Fixed(nav_h))
+        .center_x(Length::Fixed(12.0))
+        .center_y(Length::Fixed(nav_h))
+        .into();
 
         let nav_combined: Element<AddressBarMsg> =
             container(row![nav_back, nav_divider, nav_fwd].spacing(0.0))
@@ -637,35 +640,37 @@ impl AddressBar {
                 .into();
 
         // ---------- reload stub: ↺ counterclockwise arrow (U+21BA) ----------
-        let reload: Element<AddressBarMsg> =
-            iced::widget::button(
-                container(text("\u{21BA}").size(17.0).color(icon_color))
-                    .width(Length::Fixed(26.0))
-                    .height(Length::Fixed(nav_h))
-                    .center_x(Length::Fixed(26.0))
-                    .center_y(Length::Fixed(nav_h)),
-            )
-            .width(Length::Fixed(26.0))
-            .height(Length::Fixed(nav_h))
-            .padding(0)
-            .on_press(AddressBarMsg::Noop)
-            .style(move |_, status| {
-                let hovered = matches!(status, iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed);
-                iced::widget::button::Style {
-                    background: Some(iced::Background::Color(if hovered {
-                        iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
-                    } else {
-                        ctrl_bg
-                    })),
-                    border: iced::Border {
-                        color: ctrl_border_color,
-                        width: 1.0,
-                        radius: ctrl_border_radius,
-                    },
-                    ..Default::default()
-                }
-            })
-            .into();
+        let reload: Element<AddressBarMsg> = iced::widget::button(
+            container(text("\u{21BA}").size(17.0).color(icon_color))
+                .width(Length::Fixed(26.0))
+                .height(Length::Fixed(nav_h))
+                .center_x(Length::Fixed(26.0))
+                .center_y(Length::Fixed(nav_h)),
+        )
+        .width(Length::Fixed(26.0))
+        .height(Length::Fixed(nav_h))
+        .padding(0)
+        .on_press(AddressBarMsg::Noop)
+        .style(move |_, status| {
+            let hovered = matches!(
+                status,
+                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+            );
+            iced::widget::button::Style {
+                background: Some(iced::Background::Color(if hovered {
+                    iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                } else {
+                    ctrl_bg
+                })),
+                border: iced::Border {
+                    color: ctrl_border_color,
+                    width: 1.0,
+                    radius: ctrl_border_radius,
+                },
+                ..Default::default()
+            }
+        })
+        .into();
         let reload = chrome_tip("Refresh", reload);
 
         // ---------- url body ----------
@@ -1797,14 +1802,23 @@ pub enum AddressBarMsg {
     Noop,
 }
 
-fn chrome_tip<'a>(label: &'static str, el: iced::Element<'a, AddressBarMsg>) -> iced::Element<'a, AddressBarMsg> {
+fn chrome_tip<'a>(
+    label: &'static str,
+    el: iced::Element<'a, AddressBarMsg>,
+) -> iced::Element<'a, AddressBarMsg> {
     use iced::widget::{container, text, tooltip};
-    let card = container(
-        text(label)
-            .size(12.0)
-            .color(iced::Color { r: 0.933, g: 0.941, b: 0.961, a: 1.0 }),
-    )
-    .padding(iced::Padding { top: 5.0, right: 8.0, bottom: 5.0, left: 8.0 })
+    let card = container(text(label).size(12.0).color(iced::Color {
+        r: 0.933,
+        g: 0.941,
+        b: 0.961,
+        a: 1.0,
+    }))
+    .padding(iced::Padding {
+        top: 5.0,
+        right: 8.0,
+        bottom: 5.0,
+        left: 8.0,
+    })
     .style(|_| chrome_tip_card_style());
     tooltip(el, card, tooltip::Position::Bottom)
         .gap(4.0)
