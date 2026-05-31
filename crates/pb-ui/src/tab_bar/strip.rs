@@ -187,19 +187,19 @@ impl TabBar {
             let close_slot: Element<'_, TabBarMsg> = if is_hovered && !tab.is_pinned {
                 container(
                     text("\u{00d7}")
-                        .size(13.0)
+                        .size(11.0)
                         .color(iced::Color::from_rgba(0.75, 0.75, 0.75, 1.0)),
                 )
                 .width(18.0)
                 .height(18.0)
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
+                .center_x(18.0)
+                .center_y(18.0)
                 .style(|_| container::Style {
                     background: Some(iced::Background::Color(iced::Color::from_rgba(
                         1.0, 1.0, 1.0, 0.10,
                     ))),
                     border: iced::Border {
-                        radius: 4.0.into(),
+                        radius: 99.0.into(),
                         ..Default::default()
                     },
                     ..Default::default()

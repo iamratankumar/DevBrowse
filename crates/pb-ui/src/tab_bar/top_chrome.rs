@@ -7,7 +7,7 @@
 
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{button, container, row, text, Space};
+use iced::widget::{button, container, row, text, tooltip, Space};
 use iced::{alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 
 use super::{TabBar, TabBarMsg};
@@ -217,7 +217,7 @@ impl TabBar {
             }
         }
 
-        let plus_btn: Element<'_, TabBarMsg> = button(
+        let plus_btn: Element<'_, TabBarMsg> = chrome_tip("New tab", button(
             container(
                 text("+")
                     .size(18.0)
@@ -233,15 +233,16 @@ impl TabBar {
         .height(PILL_BTN_SIZE)
         .padding(0)
         .style(pill_btn_style)
-        .into();
+        .into());
 
         // Canvas tabs-button: 2 redraws per hover cycle, zero subscriptions.
-        let tabs_btn: Element<'_, TabBarMsg> = iced::widget::canvas(TabsCanvas {
-            count: count as u32,
-        })
-        .width(Length::Fixed(PILL_BTN_SIZE))
-        .height(Length::Fixed(PILL_BTN_SIZE))
-        .into();
+        let tabs_btn: Element<'_, TabBarMsg> = chrome_tip(
+            "Tab card view",
+            iced::widget::canvas(TabsCanvas { count: count as u32 })
+                .width(Length::Fixed(PILL_BTN_SIZE))
+                .height(Length::Fixed(PILL_BTN_SIZE))
+                .into(),
+        );
 
         let tabs_pill = container(
             row![plus_btn, tabs_btn]
@@ -322,11 +323,44 @@ impl TabBar {
             Space::new().width(Length::Fill),
             tabs_pill,
             Space::new().width(design::space::S4),
-            identity_capsule,
+            chrome_tip("Tab mode", identity_capsule.into()),
             Space::new().width(design::space::S8),
         ]
         .align_y(iced::alignment::Vertical::Center)
         .height(Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX))
         .into()
     }
+}
+
+fn chrome_tip<'a>(label: &'static str, el: Element<'a, TabBarMsg>) -> Element<'a, TabBarMsg> {
+    use iced::widget::{container, text};
+    use iced::{Background, Border, Color, Gradient, Shadow, Vector};
+    let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
+        .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
+        .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
+    let card = container(
+        text(label)
+            .size(12.0)
+            .color(Color { r: 0.933, g: 0.941, b: 0.961, a: 1.0 }),
+    )
+    .padding(iced::Padding { top: 5.0, right: 8.0, bottom: 5.0, left: 8.0 })
+    .style(move |_| iced::widget::container::Style {
+        background: Some(Background::Gradient(Gradient::Linear(bg))),
+        border: Border {
+            color: Color::from_rgba(1.0, 0.98, 0.94, 0.10),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+            offset: Vector::new(0.0, 6.0),
+            blur_radius: 20.0,
+        },
+        ..Default::default()
+    });
+    tooltip(el, card, tooltip::Position::Bottom)
+        .gap(4.0)
+        .delay(std::time::Duration::from_secs(1))
+        .style(|_| iced::widget::container::Style::default())
+        .into()
 }

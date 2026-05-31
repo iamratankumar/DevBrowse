@@ -198,6 +198,9 @@ pub enum Message {
     GlobalDragMove(iced::Point),
     /// Mouse released anywhere in the window — ends any active drag.
     GlobalDragEnd,
+    /// Fullscreen animation settled — apply corner_radius change.
+    /// 200 ms grace period expired — hide tooltip if cursor didn't re-enter.
+    HideTooltip,
     /// No-op used as a placeholder for mount points not yet connected.
     None,
 }
@@ -411,8 +414,26 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
                             state.tab_bar.tabs.swap(f, t);
                         }
                     }
+                    crate::sidebar::SidebarEvent::TabCloseRequested(id) => {
+                        // TODO Module 80: route through TabBroker for Strict-close modal
+                        // and renderer teardown. For now, remove the tab directly.
+                        let _ = state
+                            .tab_bar
+                            .update(crate::tab_bar::TabBarMsg::TabCloseRequested(id));
+                    }
+                    crate::sidebar::SidebarEvent::TooltipPillLeft => {
+                        return Task::perform(
+                            async {
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            },
+                            |_| Message::HideTooltip,
+                        );
+                    }
                 }
             }
+        }
+        Message::HideTooltip => {
+            state.sidebar.commit_hide();
         }
         Message::GlobalDragMove(pos) => {
             // Feed strip-local x into tab-bar drag while cursor is outside the strip.
@@ -615,6 +636,41 @@ fn view(state: &AppState) -> Element<'_, Message> {
             .on_move(|_| Message::None)
             .on_press(close_badge_msg),
         );
+    }
+
+    // Pill hover tooltip overlay — positioned to the right of the 52 px sidebar.
+    if let Some(tip_id) = state.sidebar.tooltip_pill_id {
+        if let Some(tab) = state.tab_bar.tabs.iter().find(|t| t.id == tip_id) {
+            let center_y = state.sidebar.pill_center_y(
+                tip_id,
+                &state.tab_bar.tabs,
+                state.window_height,
+                sidebar_bottom_pad,
+            );
+            if let Some(cy) = center_y {
+                let favicon_bg = tab
+                    .accent_color
+                    .map(|[r, g, b, _]| iced::Color::from_rgb(r, g, b))
+                    .unwrap_or(iced::Color::from_rgba(0.357, 0.384, 0.471, 0.8));
+                let meta = crate::sidebar::TabTip {
+                    tab_id: tip_id,
+                    favicon_letter: tab.favicon_label.chars().next().unwrap_or('?'),
+                    favicon_bg,
+                    title: tab.title.clone(),
+                    strict: tab.mode == Mode::Strict,
+                };
+                let card = crate::sidebar::tooltip_card_element(meta).map(Message::Sidebar);
+                // card_height estimate: 34px (8+8 padding + 18 content).
+                let card_h_half = 17.0_f32;
+                let top = (cy - card_h_half).max(0.0);
+                main_stack = main_stack.push(
+                    container(card)
+                        .padding(iced::Padding::new(0.0).top(top).left(sidebar_w + 12.0))
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                );
+            }
+        }
     }
 
     if let Some(popup) = state.address_bar.view_strict_popup(bar_width) {

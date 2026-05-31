@@ -535,6 +535,7 @@ impl AddressBar {
     /// TODO Module 43 wiring: pass reduced_transparency from AppState
     pub fn view(&self, bar_width: f32) -> Element<'_, AddressBarMsg> {
         let is_strict = self.mode == Mode::Strict;
+
         let focused = self.bar_state == BarState::Focused;
 
         // ---------- color palette ----------
@@ -574,75 +575,98 @@ impl AddressBar {
         // Dim icon color: #4a4d56 (inactive nav direction)
         let icon_dim = iced::Color::from_rgba(0.290, 0.302, 0.337, 1.0);
 
-        // Typographic chevrons (‹ ›) — 18 px for readability inside 26 px container.
-        let nav_back: Element<AddressBarMsg> =
-            container(text("\u{2039}").size(18.0).color(icon_color))
-                .width(Length::Fixed(24.0))
-                .height(Length::Fixed(nav_h))
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .into();
-
-        // Forward is dim when there is no forward history (stub — always dim for now).
-        let nav_fwd: Element<AddressBarMsg> =
-            container(text("\u{203A}").size(18.0).color(icon_dim))
-                .width(Length::Fixed(24.0))
-                .height(Length::Fixed(nav_h))
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .into();
-
-        // 1 px hairline divider between back and forward
-        let nav_divider: Element<AddressBarMsg> = container(text(""))
-            .width(Length::Fixed(1.0))
+        // Back and forward combined in one capsule chip: ‹ | ›
+        // Each side is a button so hover brightens it independently.
+        // Inside a chip → circular hover fill, no button border (chip owns the border).
+        let nav_btn = |glyph: &'static str, color: iced::Color| {
+            iced::widget::button(
+                container(text(glyph).size(18.0).color(color))
+                    .width(Length::Fixed(28.0))
+                    .height(Length::Fixed(nav_h))
+                    .center_x(Length::Fixed(28.0))
+                    .center_y(Length::Fixed(nav_h)),
+            )
+            .width(Length::Fixed(28.0))
             .height(Length::Fixed(nav_h))
-            .style(move |_t| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    1.0, 0.98, 0.94, 0.08,
-                ))),
-                border: iced::Border::default(),
-                text_color: None,
-                shadow: iced::Shadow::default(),
-                snap: false,
+            .padding(0)
+            .on_press(AddressBarMsg::Noop)
+            .style(|_, status| {
+                let hovered = matches!(
+                    status,
+                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+                );
+                iced::widget::button::Style {
+                    background: Some(iced::Background::Color(if hovered {
+                        iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                    } else {
+                        iced::Color::TRANSPARENT
+                    })),
+                    border: iced::Border {
+                        radius: 99.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
             })
-            .into();
+        };
 
-        // The combined pill is the only thing with a border.
+        let nav_back = chrome_tip("Previous page", nav_btn("\u{2039}", icon_color).into());
+        // Forward is dim when there is no forward history (stub — always dim for now).
+        let nav_fwd = chrome_tip("Next page", nav_btn("\u{203A}", icon_dim).into());
+
+        let nav_divider: Element<AddressBarMsg> =
+            container(text("|").size(12.0).color(iced::Color::from_rgba(1.0, 0.98, 0.94, 0.20)))
+                .width(Length::Fixed(12.0))
+                .height(Length::Fixed(nav_h))
+                .center_x(Length::Fixed(12.0))
+                .center_y(Length::Fixed(nav_h))
+                .into();
+
         let nav_combined: Element<AddressBarMsg> =
             container(row![nav_back, nav_divider, nav_fwd].spacing(0.0))
-                .style(move |_t| iced::widget::container::Style {
+                .style(move |_| iced::widget::container::Style {
                     background: Some(iced::Background::Color(ctrl_bg)),
                     border: iced::Border {
                         color: ctrl_border_color,
                         width: 1.0,
                         radius: ctrl_border_radius,
                     },
-                    text_color: None,
-                    shadow: iced::Shadow::default(),
-                    snap: false,
+                    ..Default::default()
                 })
                 .height(Length::Fixed(nav_h))
                 .into();
 
         // ---------- reload stub: ↺ counterclockwise arrow (U+21BA) ----------
         let reload: Element<AddressBarMsg> =
-            container(text("\u{21BA}").size(17.0).color(icon_color))
-                .width(Length::Fixed(26.0))
-                .height(Length::Fixed(nav_h))
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .style(move |_t| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(ctrl_bg)),
+            iced::widget::button(
+                container(text("\u{21BA}").size(17.0).color(icon_color))
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(nav_h))
+                    .center_x(Length::Fixed(26.0))
+                    .center_y(Length::Fixed(nav_h)),
+            )
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(nav_h))
+            .padding(0)
+            .on_press(AddressBarMsg::Noop)
+            .style(move |_, status| {
+                let hovered = matches!(status, iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed);
+                iced::widget::button::Style {
+                    background: Some(iced::Background::Color(if hovered {
+                        iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                    } else {
+                        ctrl_bg
+                    })),
                     border: iced::Border {
                         color: ctrl_border_color,
                         width: 1.0,
                         radius: ctrl_border_radius,
                     },
-                    text_color: None,
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                })
-                .into();
+                    ..Default::default()
+                }
+            })
+            .into();
+        let reload = chrome_tip("Refresh", reload);
 
         // ---------- url body ----------
         // Show text input when: focused OR no URL yet (new tab — skip the extra click).
@@ -714,7 +738,7 @@ impl AddressBar {
         // ---------- badge slot ----------
         let badge_widget: Element<AddressBarMsg> = match self.badge.mode {
             BadgeMode::Hidden => container(text("")).width(Length::Shrink).into(),
-            BadgeMode::Blocked(_) => {
+            BadgeMode::Blocked(_) => chrome_tip("Ad & tracker blocker", {
                 let label = self.badge.mode.label().unwrap_or_default();
                 button(
                     text(label)
@@ -744,7 +768,7 @@ impl AddressBar {
                     }
                 })
                 .into()
-            }
+            }),
             BadgeMode::Strict => {
                 // L41: non-interactive terracotta "Strict" pill. Non-customizable.
                 // Filled shield signals the tab IS strict (contrast with outlined chip).
@@ -1702,6 +1726,7 @@ impl AddressBar {
                 self.badge.update(BadgeEvent::PopoverClosed);
                 (Some(AddressBarEvent::NetworkViewerRequested), Task::none())
             }
+            AddressBarMsg::Noop => (None, Task::none()),
         }
     }
 }
@@ -1768,6 +1793,45 @@ pub enum AddressBarMsg {
     AutoDismissConvertChip,
     /// User clicked "Open Network Viewer" in the badge popover.
     NetworkViewerRequested,
+    /// Stub for nav/reload buttons not yet wired to TabBroker (Module 80).
+    Noop,
+}
+
+fn chrome_tip<'a>(label: &'static str, el: iced::Element<'a, AddressBarMsg>) -> iced::Element<'a, AddressBarMsg> {
+    use iced::widget::{container, text, tooltip};
+    let card = container(
+        text(label)
+            .size(12.0)
+            .color(iced::Color { r: 0.933, g: 0.941, b: 0.961, a: 1.0 }),
+    )
+    .padding(iced::Padding { top: 5.0, right: 8.0, bottom: 5.0, left: 8.0 })
+    .style(|_| chrome_tip_card_style());
+    tooltip(el, card, tooltip::Position::Bottom)
+        .gap(4.0)
+        .delay(std::time::Duration::from_secs(1))
+        .style(|_| iced::widget::container::Style::default())
+        .into()
+}
+
+fn chrome_tip_card_style() -> iced::widget::container::Style {
+    use iced::{Background, Border, Color, Gradient, Shadow, Vector};
+    let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
+        .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
+        .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
+    iced::widget::container::Style {
+        background: Some(Background::Gradient(Gradient::Linear(bg))),
+        border: Border {
+            color: Color::from_rgba(1.0, 0.98, 0.94, 0.10),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+            offset: Vector::new(0.0, 6.0),
+            blur_radius: 20.0,
+        },
+        ..Default::default()
+    }
 }
 
 /// Events emitted to the shell (the only cross-module boundary).
