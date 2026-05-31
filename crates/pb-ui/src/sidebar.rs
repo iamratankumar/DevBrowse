@@ -1162,4 +1162,157 @@ mod tests {
         let ev = s.update(super::SidebarMsg::PillClosePressed(7));
         assert_eq!(ev, Some(super::SidebarEvent::TabCloseRequested(7)));
     }
+
+    // ── Pill color regression locks ────────────────────────────────────────
+
+    #[test]
+    fn pill_color_active_uses_standard_active_alpha_one() {
+        use crate::shell::Mode;
+        let [r, g, b, _] = design::palette::STANDARD_ACTIVE;
+        let c = super::pill_color(Mode::Standard, true, None, false);
+        assert!((c.r - r).abs() < 0.01);
+        assert!((c.g - g).abs() < 0.01);
+        assert!((c.b - b).abs() < 0.01);
+        assert!((c.a - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_active_strict_uses_standard_active_alpha_one() {
+        use crate::shell::Mode;
+        let [r, g, b, _] = design::palette::STANDARD_ACTIVE;
+        let c = super::pill_color(Mode::Strict, true, None, false);
+        assert!((c.r - r).abs() < 0.01);
+        assert!((c.g - g).abs() < 0.01);
+        assert!((c.b - b).abs() < 0.01);
+        assert!((c.a - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_strict_not_hovered_alpha_028() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Strict, false, None, false);
+        assert!((c.a - 0.28).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_strict_hovered_alpha_075() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Strict, false, None, true);
+        assert!((c.a - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_standard_accent_not_hovered_alpha_022() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Standard, false, Some([0.5, 0.3, 0.8, 1.0]), false);
+        assert!((c.a - 0.22).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_standard_accent_hovered_alpha_065() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Standard, false, Some([0.5, 0.3, 0.8, 1.0]), true);
+        assert!((c.a - 0.65).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_standard_neutral_not_hovered_alpha_010() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Standard, false, None, false);
+        assert!((c.a - 0.10).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_inactive_standard_neutral_hovered_alpha_030() {
+        use crate::shell::Mode;
+        let c = super::pill_color(Mode::Standard, false, None, true);
+        assert!((c.a - 0.30).abs() < 0.01);
+    }
+
+    #[test]
+    fn pill_color_active_ignores_hover() {
+        use crate::shell::Mode;
+        let hovered = super::pill_color(Mode::Standard, true, None, true);
+        let not_hovered = super::pill_color(Mode::Standard, true, None, false);
+        assert!((hovered.r - not_hovered.r).abs() < 0.01);
+        assert!((hovered.g - not_hovered.g).abs() < 0.01);
+        assert!((hovered.b - not_hovered.b).abs() < 0.01);
+        assert!((hovered.a - not_hovered.a).abs() < 0.01);
+    }
+
+    // ── Tooltip state machine ──────────────────────────────────────────────
+
+    #[test]
+    fn tooltip_pill_entered_sets_tooltip_pill_id() {
+        let mut s = super::Sidebar::new();
+        let _ = s.update(super::SidebarMsg::PillEntered(5));
+        assert_eq!(s.tooltip_pill_id, Some(5));
+    }
+
+    #[test]
+    fn tooltip_pill_entered_clears_hide_pending() {
+        let mut s = super::Sidebar::new();
+        s.tooltip_hide_pending = true;
+        let _ = s.update(super::SidebarMsg::PillEntered(3));
+        assert!(!s.tooltip_hide_pending);
+    }
+
+    #[test]
+    fn tooltip_pill_left_sets_hide_pending() {
+        let mut s = super::Sidebar::new();
+        let _ = s.update(super::SidebarMsg::PillLeft(2));
+        assert!(s.tooltip_hide_pending);
+    }
+
+    #[test]
+    fn tooltip_pill_left_emits_tooltip_pill_left_event() {
+        let mut s = super::Sidebar::new();
+        let ev = s.update(super::SidebarMsg::PillLeft(2));
+        assert_eq!(ev, Some(super::SidebarEvent::TooltipPillLeft));
+    }
+
+    #[test]
+    fn tooltip_commit_hide_clears_when_pending() {
+        let mut s = super::Sidebar::new();
+        s.tooltip_pill_id = Some(1);
+        s.tooltip_hide_pending = true;
+        s.commit_hide();
+        assert_eq!(s.tooltip_pill_id, None);
+    }
+
+    #[test]
+    fn tooltip_commit_hide_noop_when_not_pending() {
+        let mut s = super::Sidebar::new();
+        s.tooltip_pill_id = Some(1);
+        s.tooltip_hide_pending = false;
+        s.commit_hide();
+        assert_eq!(s.tooltip_pill_id, Some(1));
+    }
+
+    #[test]
+    fn tooltip_reenter_after_leave_cancels_hide() {
+        let mut s = super::Sidebar::new();
+        let _ = s.update(super::SidebarMsg::PillLeft(1));
+        let _ = s.update(super::SidebarMsg::PillEntered(1));
+        assert!(!s.tooltip_hide_pending);
+        assert_eq!(s.tooltip_pill_id, Some(1));
+    }
+
+    // ── TabTip fields ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tabtip_fields_roundtrip() {
+        let tip = super::TabTip {
+            tab_id: 42,
+            favicon_letter: 'G',
+            favicon_bg: iced::Color::BLACK,
+            title: "test".into(),
+            strict: false,
+        };
+        assert_eq!(tip.tab_id, 42);
+        assert_eq!(tip.favicon_letter, 'G');
+        assert_eq!(tip.favicon_bg, iced::Color::BLACK);
+        assert_eq!(tip.title, "test");
+        assert!(!tip.strict);
+    }
 }

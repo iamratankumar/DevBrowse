@@ -239,7 +239,24 @@ fn sync_active_tab_mode(state: &mut AppState) {
     }
 }
 
-fn update(state: &mut AppState, message: Message) -> Task<Message> {
+/// Test helper: boot the app, transition to Ready, set a known 1440×900 window.
+/// Only compiled under `#[cfg(test)]` — zero cost in production.
+#[cfg(test)]
+pub(crate) fn ready_state_for_test() -> AppState {
+    let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
+    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx));
+    let _ = update(&mut state, Message::ProfileLoaded("regression-user".to_string()));
+    let _ = update(
+        &mut state,
+        Message::WindowResized(
+            iced::window::Id::unique(),
+            iced::Size::new(1440.0, 900.0),
+        ),
+    );
+    state
+}
+
+pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
     match message {
         Message::ProfileLoaded(name) => {
             state.profile_name = name;
@@ -457,7 +474,7 @@ fn update(state: &mut AppState, message: Message) -> Task<Message> {
     Task::none()
 }
 
-fn view(state: &AppState) -> Element<'_, Message> {
+pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
     let corner_radius = if state.is_fullscreen { 0.0 } else { 12.0 };
     let wallpaper = wallpaper_canvas(state.mode, state.reduced_transparency, corner_radius)
         .width(Length::Fill)
@@ -1080,3 +1097,4 @@ mod tests {
         assert_eq!(design::layout::STRICT_BORDER_PX, 2.0);
     }
 }
+

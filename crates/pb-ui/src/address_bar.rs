@@ -2357,4 +2357,11 @@ mod tests {
         bar.badge.update(BadgeEvent::Reset);
         assert!(!bar.badge.popover_open);
     }
+
+    #[test]
+    fn address_bar_noop_returns_no_event() {
+        let mut bar = make_bar();
+        let (event, _) = bar.update(AddressBarMsg::Noop);
+        assert!(event.is_none());
+    }
 }

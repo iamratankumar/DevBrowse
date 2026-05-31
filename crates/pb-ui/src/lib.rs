@@ -16,6 +16,10 @@
 #![forbid(unsafe_code)]
 #![allow(dead_code)] // stubs for pending modules 43-64
 
+// ── UI regression scenarios (test-only, zero production overhead) ──────────
+#[cfg(test)]
+mod regression;
+
 // ── Module 42 — UI shell (done) ────────────────────────────────────────────
 pub mod design; // design constants (codegen from design/tokens.json)
 pub mod glass; // GlassPanel widget + glass.wgsl
