@@ -10,9 +10,9 @@ use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{button, container, row, text, Space};
 use iced::{alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 
+use super::{TabBar, TabBarMsg};
 use crate::design;
 use crate::shell::Mode;
-use super::{TabBar, TabBarMsg};
 
 // ── Canvas tabs-button ────────────────────────────────────────────────────────
 
@@ -52,9 +52,9 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
                 state.pressed = true;
                 true
             }
-            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
-                iced::mouse::Button::Left,
-            )) if state.pressed => {
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+                if state.pressed =>
+            {
                 state.pressed = false;
                 true
             }
@@ -109,9 +109,7 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
             frame.fill(&card_path, Color::from_rgba(0.357, 0.553, 0.937, 0.22));
             frame.stroke(
                 &card_path,
-                Stroke::default()
-                    .with_width(1.5)
-                    .with_color(ink),
+                Stroke::default().with_width(1.5).with_color(ink),
             );
 
             if self.count > 0 {
@@ -129,9 +127,9 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
             // Rest: 2×2 grid, no outer border on the widget itself.
             let stroke = Stroke::default().with_width(1.5).with_color(ink);
             let cells = [
-                (pad,              pad),
+                (pad, pad),
                 (pad + cell + gap, pad),
-                (pad,              pad + cell + gap),
+                (pad, pad + cell + gap),
                 (pad + cell + gap, pad + cell + gap),
             ];
             for (i, (x, y)) in cells.into_iter().enumerate() {
@@ -200,12 +198,12 @@ impl TabBar {
         fn pill_btn_style(_: &iced::Theme, status: button::Status) -> button::Style {
             button::Style {
                 background: match status {
-                    button::Status::Hovered => Some(iced::Background::Color(
-                        Color::from_rgba(1.0, 0.98, 0.94, 0.12),
-                    )),
-                    button::Status::Pressed => Some(iced::Background::Color(
-                        Color::from_rgba(1.0, 0.98, 0.94, 0.20),
-                    )),
+                    button::Status::Hovered => Some(iced::Background::Color(Color::from_rgba(
+                        1.0, 0.98, 0.94, 0.12,
+                    ))),
+                    button::Status::Pressed => Some(iced::Background::Color(Color::from_rgba(
+                        1.0, 0.98, 0.94, 0.20,
+                    ))),
                     _ => None,
                 },
                 border: iced::Border {
@@ -221,7 +219,9 @@ impl TabBar {
 
         let plus_btn: Element<'_, TabBarMsg> = button(
             container(
-                text("+").size(18.0).color(Color::from_rgba(0.690, 0.706, 0.745, 1.0)),
+                text("+")
+                    .size(18.0)
+                    .color(Color::from_rgba(0.690, 0.706, 0.745, 1.0)),
             )
             .width(PILL_BTN_SIZE)
             .height(PILL_BTN_SIZE)
@@ -236,11 +236,12 @@ impl TabBar {
         .into();
 
         // Canvas tabs-button: 2 redraws per hover cycle, zero subscriptions.
-        let tabs_btn: Element<'_, TabBarMsg> =
-            iced::widget::canvas(TabsCanvas { count: count as u32 })
-                .width(Length::Fixed(PILL_BTN_SIZE))
-                .height(Length::Fixed(PILL_BTN_SIZE))
-                .into();
+        let tabs_btn: Element<'_, TabBarMsg> = iced::widget::canvas(TabsCanvas {
+            count: count as u32,
+        })
+        .width(Length::Fixed(PILL_BTN_SIZE))
+        .height(Length::Fixed(PILL_BTN_SIZE))
+        .into();
 
         let tabs_pill = container(
             row![plus_btn, tabs_btn]
@@ -283,7 +284,10 @@ impl TabBar {
             .height(7.0)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(dot_color)),
-                border: iced::Border { radius: 3.5.into(), ..Default::default() },
+                border: iced::Border {
+                    radius: 3.5.into(),
+                    ..Default::default()
+                },
                 ..Default::default()
             })
             .into();
