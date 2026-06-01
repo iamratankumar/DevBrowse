@@ -95,6 +95,8 @@ iced = { version = "0.14", features = ["wgpu", "canvas", "svg", "tokio"] }
 # wgpu is pulled in by iced 0.14 at 27.x; we pin it here so pb-ui::glass
 # can use wgpu APIs directly without version skew.
 wgpu = "27"
+# OS dark/light mode detection — used by pb-ui shell to set ThemeVariant at startup.
+dark-light = "2.0"
 
 # benches (dev-dependency only — never linked into release binaries).
 # README §"Cross-cutting concerns" item 13 mandates a Criterion bench

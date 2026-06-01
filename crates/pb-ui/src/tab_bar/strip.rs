@@ -23,7 +23,11 @@ const STRIP_H_MARGIN: f32 = 0.0; // horizontal gap between strip and window edge
 
 impl TabBar {
     /// Sticky horizontal chip row. Hidden when ≤ 1 tab open.
-    pub fn view_strip(&self, _window_width: f32) -> Element<'_, TabBarMsg> {
+    pub fn view_strip(
+        &self,
+        _window_width: f32,
+        palette: &'static crate::design::Palette,
+    ) -> Element<'_, TabBarMsg> {
         if self.tabs.len() <= 1 {
             return Space::new().into();
         }
@@ -44,14 +48,15 @@ impl TabBar {
 
         // 1px pipe: visible when show=true, invisible 1px spacer when false.
         // Always 1px wide so tab_positions() math is never affected.
-        let pipe = |show: bool| -> Element<'_, TabBarMsg> {
+        let [pp_r, pp_g, pp_b, pp_a] = palette.button_border;
+        let pipe = move |show: bool| -> Element<'_, TabBarMsg> {
             container(Space::new())
                 .width(1.0)
                 .height(Length::Fixed(20.0))
                 .style(move |_| container::Style {
                     background: if show {
                         Some(iced::Background::Color(iced::Color::from_rgba(
-                            1.0, 0.98, 0.94, 0.12,
+                            pp_r, pp_g, pp_b, pp_a,
                         )))
                     } else {
                         None
@@ -68,7 +73,7 @@ impl TabBar {
                 chip_elements.push(pipe(!prominent(prev_id) && !prominent(tab.id)));
             }
             let is_dragged = self.drag_id == Some(tab.id) && self.drag_active;
-            chip_elements.push(self.chip(tab, w, is_dragged));
+            chip_elements.push(self.chip(tab, w, is_dragged, palette));
         }
 
         // New-tab action lives in the sidebar + button; no redundant + in the strip.
@@ -79,16 +84,18 @@ impl TabBar {
             .spacing(0.0)
             .padding([0.0, design::space::S4]);
 
+        let [sr, sg, sb, _] = palette.glass_reduced;
+        let [sbr, sbg, sbb, sba] = palette.button_border;
         let strip = container(chip_row)
             .width(Length::Fill)
             .height(Length::Fixed(design::layout::TAB_BAR_HEIGHT_PX))
             .center_y(Length::Fixed(design::layout::TAB_BAR_HEIGHT_PX))
-            .style(|_| container::Style {
+            .style(move |_| container::Style {
                 background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    0.055, 0.071, 0.118, 0.85,
+                    sr, sg, sb, 0.92,
                 ))),
                 border: iced::Border {
-                    color: iced::Color::from_rgba(1.0, 0.98, 0.94, 0.05),
+                    color: iced::Color::from_rgba(sbr, sbg, sbb, sba),
                     width: 1.0,
                     radius: STRIP_RADIUS.into(),
                 },
@@ -125,6 +132,7 @@ impl TabBar {
         tab: &'a TabEntry,
         chip_width: f32,
         is_dragged: bool,
+        palette: &'static crate::design::Palette,
     ) -> Element<'a, TabBarMsg> {
         let is_hovered = self.hovered_tab_id == Some(tab.id);
         let is_active = self.active_id == tab.id;
@@ -132,12 +140,15 @@ impl TabBar {
         let show_title = is_active || chip_width >= 80.0;
         let is_strict = tab.mode == Mode::Strict;
 
+        let [sp_r, sp_g, sp_b, _] = design::palette::STRICT;
+        let [tp_r, tp_g, tp_b, _] = palette.text_primary;
+        let [td_r, td_g, td_b, _] = palette.text_dim;
         let text_color = if is_strict {
-            iced::Color::from_rgba(0.847, 0.722, 0.627, 1.0)
+            iced::Color::from_rgba(sp_r, sp_g, sp_b, 1.0) // terracotta — works on both themes
         } else if is_active {
-            iced::Color::from_rgba(0.941, 0.933, 0.894, 1.0)
+            iced::Color::from_rgba(tp_r, tp_g, tp_b, 1.0)
         } else {
-            iced::Color::from_rgba(0.720, 0.730, 0.760, 1.0)
+            iced::Color::from_rgba(td_r, td_g, td_b, 1.0)
         };
 
         let fav: Element<'_, TabBarMsg> = container(
@@ -149,10 +160,11 @@ impl TabBar {
         .height(16.0)
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgba(
-                0.1, 0.11, 0.14, 1.0,
-            ))),
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color({
+                let [r, g, b, _] = palette.icon_dim;
+                iced::Color::from_rgba(r, g, b, 0.6)
+            })),
             border: iced::Border {
                 radius: design::radius::FAV_PX.into(),
                 ..Default::default()
@@ -185,19 +197,19 @@ impl TabBar {
             };
 
             let close_slot: Element<'_, TabBarMsg> = if is_hovered && !tab.is_pinned {
-                container(
-                    text("\u{00d7}")
-                        .size(11.0)
-                        .color(iced::Color::from_rgba(0.75, 0.75, 0.75, 1.0)),
-                )
+                container(text("\u{00d7}").size(11.0).color({
+                    let [r, g, b, _] = palette.text_muted;
+                    iced::Color::from_rgba(r, g, b, 1.0)
+                }))
                 .width(18.0)
                 .height(18.0)
                 .center_x(18.0)
                 .center_y(18.0)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        1.0, 1.0, 1.0, 0.10,
-                    ))),
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color({
+                        let [r, g, b, a] = palette.button_hover;
+                        iced::Color::from_rgba(r, g, b, a)
+                    })),
                     border: iced::Border {
                         radius: 99.0.into(),
                         ..Default::default()
@@ -258,7 +270,8 @@ impl TabBar {
             if is_strict {
                 iced::Color::from_rgba(sr, sg, sb, 0.14)
             } else {
-                iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                let [r, g, b, a] = palette.button_hover;
+                iced::Color::from_rgba(r, g, b, a * 0.7)
             }
         } else if is_strict {
             // Inactive strict: slightly stronger fill so it reads as distinct.
@@ -296,7 +309,12 @@ impl TabBar {
             if is_strict {
                 (strict_border, 1.0_f32, iced::Shadow::default())
             } else {
-                (BORDER_STANDARD, 1.0_f32, iced::Shadow::default())
+                let [r, g, b, a] = palette.button_border;
+                (
+                    iced::Color::from_rgba(r, g, b, a * 2.0),
+                    1.0_f32,
+                    iced::Shadow::default(),
+                )
             }
         } else {
             (

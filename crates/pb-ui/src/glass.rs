@@ -45,6 +45,8 @@ use crate::design;
 pub struct GlassPanel {
     /// RGBA tint composited over the blurred wallpaper (0.0–1.0 each).
     pub tint_rgba: [f32; 4],
+    /// Solid fallback color for reduced-transparency mode (§3.4).
+    pub reduced_rgba: [f32; 4],
     /// Gaussian blur sigma in logical pixels. 0.0 = solid fallback.
     pub blur_sigma_px: f32,
     /// Saturation multiplier applied after blur (1.0 = unchanged).
@@ -62,9 +64,10 @@ pub struct GlassPanel {
 
 impl GlassPanel {
     /// Construct a URL-bar glass capsule using the standard token values.
-    pub fn url_bar(reduced_transparency: bool) -> Self {
+    pub fn url_bar(reduced_transparency: bool, palette: &'static crate::design::Palette) -> Self {
         Self {
-            tint_rgba: design::palette::GLASS_TINT_DARK,
+            tint_rgba: palette.glass_tint,
+            reduced_rgba: palette.glass_reduced,
             blur_sigma_px: design::glass::URL_BAR_BLUR_SIGMA,
             saturate: design::glass::URL_BAR_SATURATE,
             corner_radius_px: design::radius::CAPSULE_PX,
@@ -75,9 +78,15 @@ impl GlassPanel {
     }
 
     /// Construct a panel glass surface (settings, network viewer, popovers).
-    pub fn panel(width: Length, height: Length, reduced_transparency: bool) -> Self {
+    pub fn panel(
+        width: Length,
+        height: Length,
+        reduced_transparency: bool,
+        palette: &'static crate::design::Palette,
+    ) -> Self {
         Self {
-            tint_rgba: design::palette::GLASS_TINT_DARK,
+            tint_rgba: palette.glass_tint,
+            reduced_rgba: palette.glass_reduced,
             blur_sigma_px: design::glass::PANEL_BLUR_SIGMA,
             saturate: design::glass::PANEL_SATURATE,
             corner_radius_px: design::radius::PANEL_PX,
@@ -89,9 +98,15 @@ impl GlassPanel {
 
     /// Construct a sidebar glass surface (Module 44.3).
     /// blur 20 px, saturate 1.2, corner-radius 12 px (uniform in Iced v1).
-    pub fn sidebar(width: Length, height: Length, reduced_transparency: bool) -> Self {
+    pub fn sidebar(
+        width: Length,
+        height: Length,
+        reduced_transparency: bool,
+        palette: &'static crate::design::Palette,
+    ) -> Self {
         Self {
-            tint_rgba: design::palette::GLASS_TINT_DARK,
+            tint_rgba: palette.glass_tint,
+            reduced_rgba: palette.glass_reduced,
             blur_sigma_px: design::glass::SIDEBAR_BLUR_SIGMA,
             saturate: design::glass::PANEL_SATURATE,
             corner_radius_px: 12.0,
@@ -105,6 +120,7 @@ impl GlassPanel {
     pub fn view<'a, Message: 'a>(&self) -> Element<'a, Message> {
         let program = GlassProgram {
             tint_rgba: self.tint_rgba,
+            reduced_rgba: self.reduced_rgba,
             blur_sigma_px: self.blur_sigma_px,
             saturate: self.saturate,
             corner_radius_px: self.corner_radius_px,
@@ -120,6 +136,7 @@ impl GlassPanel {
 
 struct GlassProgram {
     tint_rgba: [f32; 4],
+    reduced_rgba: [f32; 4],
     blur_sigma_px: f32,
     saturate: f32,
     corner_radius_px: f32,
@@ -145,8 +162,8 @@ impl<Message> canvas::Program<Message> for GlassProgram {
         // wallpaper; for now we use the tint over the reduced-transparency
         // solid fallback colour from §3.4 of system.md.
         let base_color = if use_solid {
-            // §3.4 solid fallback: #14161e (dark mode)
-            let [r, g, b, _] = design::palette::GLASS_REDUCED_DARK;
+            // §3.4 solid fallback — color comes from the resolved theme palette.
+            let [r, g, b, _] = self.reduced_rgba;
             Color::from_rgba(r, g, b, 1.0)
         } else {
             // Full blur path: the solid tint is an approximation until the
@@ -204,13 +221,13 @@ mod tests {
 
     #[test]
     fn url_bar_glass_uses_token_sigma() {
-        let g = GlassPanel::url_bar(false);
+        let g = GlassPanel::url_bar(false, &design::DARK_PALETTE);
         assert_eq!(g.blur_sigma_px, design::glass::URL_BAR_BLUR_SIGMA);
     }
 
     #[test]
     fn reduced_transparency_zeroes_blur_in_view() {
-        let g = GlassPanel::url_bar(true);
+        let g = GlassPanel::url_bar(true, &design::DARK_PALETTE);
         assert!(g.reduced_transparency);
         // blur_sigma_px itself is unchanged — the *canvas program* switches
         // rendering path based on the flag, not by zeroing sigma.
@@ -219,25 +236,30 @@ mod tests {
 
     #[test]
     fn panel_glass_uses_panel_sigma() {
-        let g = GlassPanel::panel(Length::Fill, Length::Fill, false);
+        let g = GlassPanel::panel(Length::Fill, Length::Fill, false, &design::DARK_PALETTE);
         assert_eq!(g.blur_sigma_px, design::glass::PANEL_BLUR_SIGMA);
     }
 
     #[test]
     fn corner_radius_url_bar_matches_capsule_token() {
-        let g = GlassPanel::url_bar(false);
+        let g = GlassPanel::url_bar(false, &design::DARK_PALETTE);
         assert_eq!(g.corner_radius_px, design::radius::CAPSULE_PX);
     }
 
     #[test]
     fn corner_radius_panel_matches_panel_token() {
-        let g = GlassPanel::panel(Length::Fill, Length::Fill, false);
+        let g = GlassPanel::panel(Length::Fill, Length::Fill, false, &design::DARK_PALETTE);
         assert_eq!(g.corner_radius_px, design::radius::PANEL_PX);
     }
 
     #[test]
     fn sidebar_glass_uses_sidebar_sigma() {
-        let g = GlassPanel::sidebar(Length::Fixed(52.0), Length::Fill, false);
+        let g = GlassPanel::sidebar(
+            Length::Fixed(52.0),
+            Length::Fill,
+            false,
+            &design::DARK_PALETTE,
+        );
         assert_eq!(g.blur_sigma_px, design::glass::SIDEBAR_BLUR_SIGMA);
         assert_eq!(g.corner_radius_px, 12.0);
     }

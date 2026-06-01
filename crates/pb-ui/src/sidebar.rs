@@ -280,6 +280,7 @@ impl Sidebar {
         reduced_transparency: bool,
         bottom_pad: f32,
         window_height: f32,
+        palette: &'static crate::design::Palette,
     ) -> iced::Element<'a, SidebarMsg> {
         use iced::widget::{canvas, column, container, mouse_area, text, Space};
         use iced::{Alignment, Color, Length};
@@ -300,6 +301,7 @@ impl Sidebar {
         // Stack distribute height.
         let glass_canvas = canvas(SidebarBgProgram {
             reduced_transparency,
+            palette,
         })
         .width(Length::Fixed(w))
         .height(Length::Fill);
@@ -319,6 +321,7 @@ impl Sidebar {
         let search_btn = sidebar_chrome_tip(
             "Search tabs",
             icon_btn_svg(search_svg, SidebarMsg::SearchPressed),
+            palette,
         );
 
         // ── Tab pills ─────────────────────────────────────────────────────
@@ -383,6 +386,7 @@ impl Sidebar {
                 is_being_dragged: dragging && drag_id == Some(t.id),
                 is_drag_target: dragging && drag_hovered_id == Some(t.id),
                 is_hovered: !dragging && tooltip_pill_id == Some(t.id),
+                palette,
             })
         };
 
@@ -390,18 +394,21 @@ impl Sidebar {
             standard_tabs.iter().map(make_pill).collect();
 
         if !strict_tabs.is_empty() {
-            pill_items.push(
-                container(iced::widget::Row::new())
-                    .width(18.0)
-                    .height(1.0)
-                    .style(|_| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba(
-                            1.0, 0.98, 0.94, 0.10,
-                        ))),
-                        ..Default::default()
-                    })
-                    .into(),
-            );
+            {
+                let [br, bg_b, bb, ba] = palette.button_border;
+                pill_items.push(
+                    container(iced::widget::Row::new())
+                        .width(18.0)
+                        .height(1.0)
+                        .style(move |_| iced::widget::container::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba(
+                                br, bg_b, bb, ba,
+                            ))),
+                            ..Default::default()
+                        })
+                        .into(),
+                );
+            }
             for t in &strict_tabs {
                 pill_items.push(make_pill(t));
             }
@@ -420,6 +427,7 @@ impl Sidebar {
                 text("\u{2605}").size(18.0).color(ICON_MUTED),
                 SidebarMsg::FavoritesPressed,
             ),
+            palette,
         );
         let gear_btn = sidebar_chrome_tip(
             "Settings",
@@ -427,33 +435,45 @@ impl Sidebar {
                 text("\u{2699}").size(18.0).color(ICON_MUTED),
                 SidebarMsg::GearPressed,
             ),
+            palette,
         );
 
+        let [pbi_r, pbi_g, pbi_b, pbi_a] = palette.button_idle;
+        let [pbb_r, pbb_g, pbb_b, pbb_a] = palette.button_border;
+        let [ipr, ipg, ipb, _] = palette.icon_primary;
         let plus_btn = sidebar_chrome_tip(
             "New tab",
             iced::widget::button(
-                container(text("+").size(16.0).color(CHAMPAGNE))
-                    .width(30.0)
-                    .height(30.0)
-                    .center_x(30.0)
-                    .center_y(30.0),
+                container(
+                    text("+")
+                        .size(16.0)
+                        .color(Color::from_rgba(ipr, ipg, ipb, 1.0)),
+                )
+                .width(30.0)
+                .height(30.0)
+                .center_x(30.0)
+                .center_y(30.0),
             )
             .width(30.0)
             .height(30.0)
             .padding(0)
             .on_press(SidebarMsg::NewTabPressed)
-            .style(|_, _| iced::widget::button::Style {
+            .style(move |_, _| iced::widget::button::Style {
                 background: Some(iced::Background::Color(Color::from_rgba(
-                    0.788, 0.659, 0.471, 0.20,
+                    pbi_r,
+                    pbi_g,
+                    pbi_b,
+                    pbi_a * 1.5,
                 ))),
                 border: iced::Border {
-                    color: Color::from_rgba(0.788, 0.659, 0.471, 0.45),
+                    color: Color::from_rgba(pbb_r, pbb_g, pbb_b, pbb_a),
                     width: 1.0,
                     radius: 8.0.into(),
                 },
                 ..Default::default()
             })
             .into(),
+            palette,
         );
 
         // ── Content column laid over the glass ────────────────────────────
@@ -570,6 +590,7 @@ impl<Message> iced::widget::canvas::Program<Message> for TitleZoneProgram {
 /// the parent layout distributes height.
 struct SidebarBgProgram {
     reduced_transparency: bool,
+    palette: &'static crate::design::Palette,
 }
 
 impl<Message> iced::widget::canvas::Program<Message> for SidebarBgProgram {
@@ -583,7 +604,7 @@ impl<Message> iced::widget::canvas::Program<Message> for SidebarBgProgram {
         bounds: iced::Rectangle,
         _: iced::mouse::Cursor,
     ) -> Vec<iced::widget::canvas::Geometry<iced::Renderer>> {
-        use iced::widget::canvas::{Frame, Path};
+        use iced::widget::canvas::{Frame, Path, Stroke};
         use iced::{Color, Point, Size};
 
         let mut frame = Frame::new(renderer, bounds.size());
@@ -593,39 +614,30 @@ impl<Message> iced::widget::canvas::Program<Message> for SidebarBgProgram {
         }
 
         // Same color logic as GlassProgram in glass.rs.
-        let use_solid = self.reduced_transparency;
-        let base_color = if use_solid {
-            let [r, g, b, _] = crate::design::palette::GLASS_REDUCED_DARK;
-            Color::from_rgb(r, g, b)
-        } else {
-            let [r, g, b, a] = crate::design::palette::GLASS_TINT_DARK;
-            let sat = crate::design::glass::PANEL_SATURATE;
-            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            Color::from_rgba(
-                (lum + (r - lum) * sat).clamp(0.0, 1.0),
-                (lum + (g - lum) * sat).clamp(0.0, 1.0),
-                (lum + (b - lum) * sat).clamp(0.0, 1.0),
-                a,
-            )
-        };
-
+        // Always start with an opaque base from glass_reduced so the sidebar
+        // colour is clearly visible in both dark and light themes regardless of
+        // what the wgpu compositor has rendered behind this canvas.
+        let [br, bg_c, bb, _] = self.palette.glass_reduced;
         let rrect = Path::rounded_rectangle(
             Point::new(0.0, 0.0),
             Size::new(bounds.width, bounds.height),
             iced::border::Radius::from(12.0),
         );
-        frame.fill(&rrect, base_color);
+        frame.fill(&rrect, Color::from_rgb(br, bg_c, bb));
 
-        if !use_solid {
-            let [r, g, b, a] = crate::design::palette::GLASS_TINT_DARK;
-            frame.fill(&rrect, Color::from_rgba(r, g, b, a * 0.65));
+        // Overlay the glass tint for the frosted-glass shimmer.
+        if !self.reduced_transparency {
+            let [r, g, b, a] = self.palette.glass_tint;
+            frame.fill(&rrect, Color::from_rgba(r, g, b, a * 0.55));
         }
 
-        // Mock border: border-top: 1px solid rgba(255,250,240,0.04)
-        frame.fill_rectangle(
-            Point::ORIGIN,
-            Size::new(bounds.width, 1.0),
-            Color::from_rgba(1.0, 0.98, 0.94, 0.04),
+        // Hairline border follows the rounded glass shape.
+        let [br, bg_b, bb, ba] = self.palette.button_border;
+        frame.stroke(
+            &rrect,
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(Color::from_rgba(br, bg_b, bb, ba)),
         );
 
         vec![frame.into_geometry()]
@@ -650,6 +662,7 @@ struct PillProps {
     is_being_dragged: bool,
     is_drag_target: bool,
     is_hovered: bool,
+    palette: &'static crate::design::Palette,
 }
 
 fn tab_pill(p: PillProps) -> iced::Element<'static, SidebarMsg> {
@@ -664,11 +677,21 @@ fn tab_pill(p: PillProps) -> iced::Element<'static, SidebarMsg> {
         is_being_dragged,
         is_drag_target,
         is_hovered,
+        palette,
     } = p;
     use iced::widget::{container, mouse_area};
     use iced::Length;
 
     let base_color = pill_color(mode, active, accent_color, is_hovered);
+    // For inactive Standard tabs without a custom accent, the warm-white
+    // neutral is invisible on light backgrounds. Use palette.icon_primary
+    // at reduced opacity so the indicator is visible in both themes.
+    let base_color = if !active && mode == Mode::Standard && accent_color.is_none() {
+        let [r, g, b, _] = palette.icon_primary;
+        iced::Color::from_rgba(r, g, b, if is_hovered { 0.55 } else { 0.30 })
+    } else {
+        base_color
+    };
 
     // Dragged pill: fade to 30% opacity (lifted). Target pill: solid accent blue.
     let indicator_color = if is_drag_target {
@@ -816,12 +839,14 @@ fn pill_color(
 fn sidebar_chrome_tip<'a>(
     label: &'static str,
     el: iced::Element<'a, SidebarMsg>,
+    palette: &'static crate::design::Palette,
 ) -> iced::Element<'a, SidebarMsg> {
     use iced::widget::{container, text, tooltip};
+    let [tr, tg, tb, _] = palette.text_primary;
     let card = container(text(label).size(12.0).color(iced::Color {
-        r: 0.933,
-        g: 0.941,
-        b: 0.961,
+        r: tr,
+        g: tg,
+        b: tb,
         a: 1.0,
     }))
     .padding(iced::Padding {
@@ -830,7 +855,7 @@ fn sidebar_chrome_tip<'a>(
         bottom: 5.0,
         left: 8.0,
     })
-    .style(|_| tip_card_style());
+    .style(move |_| tip_card_style(palette));
     tooltip(el, card, tooltip::Position::Right)
         .gap(8.0)
         .delay(std::time::Duration::from_secs(1))
@@ -919,15 +944,19 @@ fn tip_bold() -> iced::Font {
 
 /// Glass card background + border + drop-shadow — extracted so the closure
 /// in `with_tab_tooltip` is a one-liner rather than an inline struct literal.
-fn tip_card_style() -> iced::widget::container::Style {
+fn tip_card_style(palette: &'static crate::design::Palette) -> iced::widget::container::Style {
     use iced::{Background, Border, Color, Gradient, Shadow, Vector};
+    let [r, g, b, _] = palette.glass_tint;
     let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-        .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
-        .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
+        .add_stop(0.0, Color::from_rgba(r, g, b, 0.86))
+        .add_stop(1.0, Color::from_rgba(r, g, b, 0.82));
     iced::widget::container::Style {
         background: Some(Background::Gradient(Gradient::Linear(bg))),
         border: Border {
-            color: Color::from_rgba(1.0, 0.98, 0.94, 0.10),
+            color: {
+                let [r, g, b, a] = palette.button_border;
+                Color::from_rgba(r, g, b, a)
+            },
             width: 1.0,
             radius: 11.0.into(),
         },
@@ -998,13 +1027,18 @@ fn tip_badge<'a>() -> iced::Element<'a, SidebarMsg> {
 /// The shell renders this as a Stack overlay at the correct Y position.
 /// The card's mouse_area re-fires PillEntered so the 200 ms hide grace is
 /// cancelled when the cursor moves from pill into the card.
-pub fn tooltip_card_element(meta: TabTip) -> iced::Element<'static, SidebarMsg> {
+pub fn tooltip_card_element(
+    meta: TabTip,
+    palette: &'static crate::design::Palette,
+) -> iced::Element<'static, SidebarMsg> {
     use iced::widget::{button, container, mouse_area, row, text};
     use iced::{Alignment, Padding};
 
     let tab_id = meta.tab_id;
 
-    let mut title_row = row![text(meta.title).size(13.0).color(TIP_TEXT)]
+    let [tr, tg, tb, _] = palette.text_primary;
+    let tip_text = iced::Color::from_rgb(tr, tg, tb);
+    let mut title_row = row![text(meta.title).size(13.0).color(tip_text)]
         .spacing(7.0)
         .align_y(Alignment::Center);
     if meta.strict {
@@ -1047,7 +1081,7 @@ pub fn tooltip_card_element(meta: TabTip) -> iced::Element<'static, SidebarMsg> 
         bottom: 8.0,
         left: 10.0,
     })
-    .style(|_| tip_card_style());
+    .style(move |_| tip_card_style(palette));
 
     // on_enter cancels the pending hide so cursor can move freely from pill to card.
     mouse_area(card)
@@ -1133,7 +1167,10 @@ mod tests {
         let tip = super::TabTip {
             tab_id: 1,
             favicon_letter: 'G',
-            favicon_bg: iced::Color::from_rgb(0.1, 0.1, 0.1),
+            favicon_bg: {
+                let [r, g, b, _] = crate::design::DARK_PALETTE.icon_dim;
+                iced::Color::from_rgb(r, g, b)
+            },
             title: "github.com".into(),
             strict: true,
         };
@@ -1142,7 +1179,7 @@ mod tests {
 
     #[test]
     fn tooltip_tip_card_has_background() {
-        let style = super::tip_card_style();
+        let style = super::tip_card_style(&crate::design::DARK_PALETTE);
         assert!(
             style.background.is_some(),
             "card must have a non-transparent background"

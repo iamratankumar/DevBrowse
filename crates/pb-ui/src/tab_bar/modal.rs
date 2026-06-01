@@ -10,15 +10,20 @@ use crate::design;
 impl TabBar {
     /// Returns the modal element when active, None when Hidden.
     /// Shell centers this in the main Stack over the full window.
-    pub fn view_strict_close_modal(&self) -> Option<Element<'_, TabBarMsg>> {
+    pub fn view_strict_close_modal(
+        &self,
+        palette: &'static crate::design::Palette,
+    ) -> Option<Element<'_, TabBarMsg>> {
         if self.modal == StrictCloseModal::Hidden {
             return None;
         }
 
         let [sr, sg, sb, _] = design::palette::STRICT;
         let terracotta = iced::Color::from_rgba(sr, sg, sb, 1.0);
-        let text_primary = iced::Color::from_rgba(0.925, 0.929, 0.941, 1.0);
-        let text_secondary = iced::Color::from_rgba(0.847, 0.851, 0.878, 1.0);
+        let [tr, tg, tb, _] = palette.text_primary;
+        let [mr, mg, mb, _] = palette.text_muted;
+        let text_primary = iced::Color::from_rgba(tr, tg, tb, 1.0);
+        let text_secondary = iced::Color::from_rgba(mr, mg, mb, 1.0);
 
         let header = row![
             container(text("!").size(18.0).color(terracotta))
@@ -114,9 +119,9 @@ impl TabBar {
             .width(460.0)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    design::palette::GLASS_TINT_DARK[0],
-                    design::palette::GLASS_TINT_DARK[1],
-                    design::palette::GLASS_TINT_DARK[2],
+                    palette.glass_tint[0],
+                    palette.glass_tint[1],
+                    palette.glass_tint[2],
                     0.96,
                 ))),
                 border: iced::Border {

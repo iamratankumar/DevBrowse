@@ -18,6 +18,7 @@ use crate::shell::Mode;
 
 struct TabsCanvas {
     count: u32,
+    palette: &'static crate::design::Palette,
 }
 
 #[derive(Default)]
@@ -81,7 +82,8 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
         let h = bounds.height;
         let g = w.min(h);
 
-        let ink = Color::from_rgba(0.690, 0.706, 0.745, 1.0); // matches + button icon color
+        let [ik_r, ik_g, ik_b, _] = self.palette.icon_primary;
+        let ink = Color::from_rgba(ik_r, ik_g, ik_b, 1.0);
 
         // Grid layout constants — shared between rest and hover scenes.
         let pad = g * 0.18;
@@ -99,7 +101,8 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
                 rounded_rect(b, 0.5, 0.5, w - 1.0, h - 1.0, circle_r);
             });
             let bg_alpha: f32 = if state.pressed { 0.20 } else { 0.12 };
-            frame.fill(&circle_path, Color::from_rgba(1.0, 0.98, 0.94, bg_alpha));
+            let [bh_r, bh_g, bh_b, _] = self.palette.button_hover;
+            frame.fill(&circle_path, Color::from_rgba(bh_r, bh_g, bh_b, bg_alpha));
 
             // Card: inner area minus the same pad used by grid cells, so it
             // looks like "one cell expanded to fill the space".
@@ -179,43 +182,50 @@ fn rounded_rect(b: &mut canvas::path::Builder, x: f32, y: f32, w: f32, h: f32, r
 impl TabBar {
     /// Tabs-button and identity capsule for the top-bar overlay.
     /// Shell places this in a Stack above the address bar (right-aligned).
-    pub fn view_top_chrome(&self) -> Element<'_, TabBarMsg> {
+    pub fn view_top_chrome(
+        &self,
+        palette: &'static crate::design::Palette,
+    ) -> Element<'_, TabBarMsg> {
         let count = self.tabs.len();
         let [ar, ag, ab, _] = design::palette::ACCENT;
         let [sr, sg, sb, _] = design::palette::STRICT;
 
         let glass_tint = Color::from_rgba(
-            design::palette::GLASS_TINT_DARK[0],
-            design::palette::GLASS_TINT_DARK[1],
-            design::palette::GLASS_TINT_DARK[2],
-            design::palette::GLASS_TINT_DARK[3],
+            palette.glass_tint[0],
+            palette.glass_tint[1],
+            palette.glass_tint[2],
+            palette.glass_tint[3],
         );
-        let glass_border = Color::from_rgba(1.0, 0.98, 0.94, 0.08);
+        let [gbr, gbg, gbb, gba] = palette.button_border;
+        let glass_border = Color::from_rgba(gbr, gbg, gbb, gba);
 
         // Must fit within TOP_BAR_HEIGHT_PX (36 px) — 28 px leaves 4 px margin each side.
         const PILL_BTN_SIZE: f32 = 28.0;
 
-        fn pill_btn_style(_: &iced::Theme, status: button::Status) -> button::Style {
-            button::Style {
-                background: match status {
-                    button::Status::Hovered => Some(iced::Background::Color(Color::from_rgba(
-                        1.0, 0.98, 0.94, 0.12,
-                    ))),
-                    button::Status::Pressed => Some(iced::Background::Color(Color::from_rgba(
-                        1.0, 0.98, 0.94, 0.20,
-                    ))),
-                    _ => None,
-                },
-                border: iced::Border {
-                    radius: 14.0.into(),
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                },
-                text_color: Color::from_rgba(0.690, 0.706, 0.745, 1.0),
-                shadow: iced::Shadow::default(),
-                snap: false,
-            }
-        }
+        let [bhr, bhg, bhb, bha] = palette.button_hover;
+        let [tr, tg, tb, _] = palette.icon_primary;
+        let pill_btn_style = move |_: &iced::Theme, status: button::Status| button::Style {
+            background: match status {
+                button::Status::Hovered => Some(iced::Background::Color(Color::from_rgba(
+                    bhr, bhg, bhb, bha,
+                ))),
+                button::Status::Pressed => Some(iced::Background::Color(Color::from_rgba(
+                    bhr,
+                    bhg,
+                    bhb,
+                    bha * 1.5,
+                ))),
+                _ => None,
+            },
+            border: iced::Border {
+                radius: 14.0.into(),
+                color: Color::TRANSPARENT,
+                width: 0.0,
+            },
+            text_color: Color::from_rgba(tr, tg, tb, 1.0),
+            shadow: iced::Shadow::default(),
+            snap: false,
+        };
 
         let plus_btn: Element<'_, TabBarMsg> = chrome_tip(
             "New tab",
@@ -223,7 +233,7 @@ impl TabBar {
                 container(
                     text("+")
                         .size(18.0)
-                        .color(Color::from_rgba(0.690, 0.706, 0.745, 1.0)),
+                        .color(Color::from_rgba(tr, tg, tb, 1.0)),
                 )
                 .width(PILL_BTN_SIZE)
                 .height(PILL_BTN_SIZE)
@@ -236,6 +246,7 @@ impl TabBar {
             .padding(0)
             .style(pill_btn_style)
             .into(),
+            palette,
         );
 
         // Canvas tabs-button: 2 redraws per hover cycle, zero subscriptions.
@@ -243,10 +254,12 @@ impl TabBar {
             "Tab card view",
             iced::widget::canvas(TabsCanvas {
                 count: count as u32,
+                palette,
             })
             .width(Length::Fixed(PILL_BTN_SIZE))
             .height(Length::Fixed(PILL_BTN_SIZE))
             .into(),
+            palette,
         );
 
         let tabs_pill = container(
@@ -303,10 +316,10 @@ impl TabBar {
                 dot,
                 text(capsule_label)
                     .size(design::type_scale::BODY_SM_PX)
-                    .color(Color::from_rgba(0.925, 0.929, 0.941, 1.0)),
+                    .color(Color::from_rgba(tr, tg, tb, 1.0)),
                 text("\u{25be}")
                     .size(9.0)
-                    .color(Color::from_rgba(0.416, 0.424, 0.478, 1.0)),
+                    .color(Color::from_rgba(tr, tg, tb, 0.6)),
             ]
             .align_y(iced::alignment::Vertical::Center)
             .spacing(design::space::S3),
@@ -328,7 +341,7 @@ impl TabBar {
             Space::new().width(Length::Fill),
             tabs_pill,
             Space::new().width(design::space::S4),
-            chrome_tip("Tab mode", identity_capsule.into()),
+            chrome_tip("Tab mode", identity_capsule.into(), palette),
             Space::new().width(design::space::S8),
         ]
         .align_y(iced::alignment::Vertical::Center)
@@ -337,16 +350,22 @@ impl TabBar {
     }
 }
 
-fn chrome_tip<'a>(label: &'static str, el: Element<'a, TabBarMsg>) -> Element<'a, TabBarMsg> {
+fn chrome_tip<'a>(
+    label: &'static str,
+    el: Element<'a, TabBarMsg>,
+    palette: &'static crate::design::Palette,
+) -> Element<'a, TabBarMsg> {
     use iced::widget::{container, text};
     use iced::{Background, Border, Color, Gradient, Shadow, Vector};
+    let [r, g, b, _] = palette.glass_tint;
+    let [tr, tg, tb, _] = palette.text_primary;
     let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-        .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
-        .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
+        .add_stop(0.0, Color::from_rgba(r, g, b, 0.86))
+        .add_stop(1.0, Color::from_rgba(r, g, b, 0.82));
     let card = container(text(label).size(12.0).color(Color {
-        r: 0.933,
-        g: 0.941,
-        b: 0.961,
+        r: tr,
+        g: tg,
+        b: tb,
         a: 1.0,
     }))
     .padding(iced::Padding {

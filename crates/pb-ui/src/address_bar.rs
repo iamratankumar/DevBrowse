@@ -533,7 +533,11 @@ impl AddressBar {
     /// Suggestion dropdown renders as a styled panel below when open (Focused only).
     /// Nav/reload/fav/lock are visual stubs; interaction wired in Phase 11 (Module 80).
     /// TODO Module 43 wiring: pass reduced_transparency from AppState
-    pub fn view(&self, bar_width: f32) -> Element<'_, AddressBarMsg> {
+    pub fn view(
+        &self,
+        bar_width: f32,
+        palette: &'static crate::design::Palette,
+    ) -> Element<'_, AddressBarMsg> {
         let is_strict = self.mode == Mode::Strict;
 
         let focused = self.bar_state == BarState::Focused;
@@ -541,10 +545,10 @@ impl AddressBar {
         // ---------- color palette ----------
         let [ar, ag, ab, _] = design::palette::ACCENT;
         let [sr, sg, sb, _] = design::palette::STRICT;
-        let [tr, tg, tb, _] = design::palette::TEXT_PRIMARY_DARK;
-        let [mr, mg, mb, _] = design::palette::TEXT_MUTED_DARK;
-        let [dr, dg, db, _] = design::palette::TEXT_DIM_DARK;
-        let [gtr, gtg, gtb, gta] = design::palette::GLASS_TINT_DARK;
+        let [tr, tg, tb, _] = palette.text_primary;
+        let [mr, mg, mb, _] = palette.text_muted;
+        let [dr, dg, db, _] = palette.text_dim;
+        let [gtr, gtg, gtb, gta] = palette.glass_tint;
 
         // Mode-aware pill color: champagne (Standard) or terracotta (Strict). L41.
         let (pr, pg, pb) = if is_strict {
@@ -566,19 +570,20 @@ impl AddressBar {
         // Plain containers — no button widget — since interaction is Phase 11 (Module 80).
         // Using button here causes Iced's default box style to bleed through.
         let nav_h = design::layout::URL_BAR_CONTROL_HEIGHT_PX; // 26 px
-                                                               // Exact mock values: rgba(255,250,240,0.05) bg, rgba(255,250,240,0.07) border.
-        let ctrl_bg = iced::Color::from_rgba(1.0, 0.98, 0.94, 0.05);
-        let ctrl_border_color = iced::Color::from_rgba(1.0, 0.98, 0.94, 0.07);
+        let [bi_r, bi_g, bi_b, bi_a] = palette.button_idle;
+        let ctrl_bg = iced::Color::from_rgba(bi_r, bi_g, bi_b, bi_a);
+        let [bb_r, bb_g, bb_b, bb_a] = palette.button_border;
+        let ctrl_border_color = iced::Color::from_rgba(bb_r, bb_g, bb_b, bb_a);
         let ctrl_border_radius: iced::border::Radius = design::radius::BUTTON_PX.into();
-        // Mock icon color: #b0b4be
-        let icon_color = iced::Color::from_rgba(0.690, 0.706, 0.745, 1.0);
-        // Dim icon color: #4a4d56 (inactive nav direction)
-        let icon_dim = iced::Color::from_rgba(0.290, 0.302, 0.337, 1.0);
+        let [ip_r, ip_g, ip_b, _] = palette.icon_primary;
+        let icon_color = iced::Color::from_rgba(ip_r, ip_g, ip_b, 1.0);
+        let [id_r, id_g, id_b, _] = palette.icon_dim;
+        let icon_dim = iced::Color::from_rgba(id_r, id_g, id_b, 1.0);
 
         // Back and forward combined in one capsule chip: ‹ | ›
         // Each side is a button so hover brightens it independently.
         // Inside a chip → circular hover fill, no button border (chip owns the border).
-        let nav_btn = |glyph: &'static str, color: iced::Color| {
+        let nav_btn = |glyph: &'static str, color: iced::Color, is_enabled: bool| {
             iced::widget::button(
                 container(text(glyph).size(18.0).color(color))
                     .width(Length::Fixed(28.0))
@@ -590,14 +595,17 @@ impl AddressBar {
             .height(Length::Fixed(nav_h))
             .padding(0)
             .on_press(AddressBarMsg::Noop)
-            .style(|_, status| {
-                let hovered = matches!(
-                    status,
-                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-                );
+            .style(move |_, status| {
+                let hovered = is_enabled
+                    && matches!(
+                        status,
+                        iced::widget::button::Status::Hovered
+                            | iced::widget::button::Status::Pressed
+                    );
+                let [bh_r, bh_g, bh_b, bh_a] = palette.button_hover;
                 iced::widget::button::Style {
                     background: Some(iced::Background::Color(if hovered {
-                        iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                        iced::Color::from_rgba(bh_r, bh_g, bh_b, bh_a * 0.6)
                     } else {
                         iced::Color::TRANSPARENT
                     })),
@@ -610,15 +618,22 @@ impl AddressBar {
             })
         };
 
-        let nav_back = chrome_tip("Previous page", nav_btn("\u{2039}", icon_color).into());
+        let nav_back = chrome_tip(
+            "Previous page",
+            nav_btn("\u{2039}", icon_color, true).into(),
+            palette,
+        );
         // Forward is dim when there is no forward history (stub — always dim for now).
-        let nav_fwd = chrome_tip("Next page", nav_btn("\u{203A}", icon_dim).into());
+        let nav_fwd = chrome_tip(
+            "Next page",
+            nav_btn("\u{203A}", icon_dim, false).into(),
+            palette,
+        );
 
-        let nav_divider: Element<AddressBarMsg> = container(
-            text("|")
-                .size(12.0)
-                .color(iced::Color::from_rgba(1.0, 0.98, 0.94, 0.20)),
-        )
+        let nav_divider: Element<AddressBarMsg> = container(text("|").size(12.0).color({
+            let [r, g, b, a] = palette.button_border;
+            iced::Color::from_rgba(r, g, b, a * 2.5)
+        }))
         .width(Length::Fixed(12.0))
         .height(Length::Fixed(nav_h))
         .center_x(Length::Fixed(12.0))
@@ -658,7 +673,8 @@ impl AddressBar {
             );
             iced::widget::button::Style {
                 background: Some(iced::Background::Color(if hovered {
-                    iced::Color::from_rgba(1.0, 0.98, 0.94, 0.08)
+                    let [r, g, b, a] = palette.button_hover;
+                    iced::Color::from_rgba(r, g, b, a)
                 } else {
                     ctrl_bg
                 })),
@@ -671,7 +687,7 @@ impl AddressBar {
             }
         })
         .into();
-        let reload = chrome_tip("Refresh", reload);
+        let reload = chrome_tip("Refresh", reload, palette);
 
         // ---------- url body ----------
         // Show text input when: focused OR no URL yet (new tab — skip the extra click).
@@ -743,37 +759,41 @@ impl AddressBar {
         // ---------- badge slot ----------
         let badge_widget: Element<AddressBarMsg> = match self.badge.mode {
             BadgeMode::Hidden => container(text("")).width(Length::Shrink).into(),
-            BadgeMode::Blocked(_) => chrome_tip("Ad & tracker blocker", {
-                let label = self.badge.mode.label().unwrap_or_default();
-                button(
-                    text(label)
-                        .size(design::type_scale::LABEL_UPPER_PX)
-                        .color(pill_color),
-                )
-                .on_press(AddressBarMsg::Badge(BadgeEvent::PopoverToggled))
-                .padding([design::space::S1, design::space::S5])
-                .style(move |_t, status| {
-                    let a = if matches!(
-                        status,
-                        iced::widget::button::Status::Hovered
-                            | iced::widget::button::Status::Pressed
-                    ) {
-                        0.28_f32
-                    } else {
-                        0.16_f32
-                    };
-                    iced::widget::button::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgba(
-                            ar, ag, ab, a,
-                        ))),
-                        text_color: pill_color,
-                        border: pill_border,
-                        shadow: iced::Shadow::default(),
-                        snap: false,
-                    }
-                })
-                .into()
-            }),
+            BadgeMode::Blocked(_) => chrome_tip(
+                "Ad & tracker blocker",
+                {
+                    let label = self.badge.mode.label().unwrap_or_default();
+                    button(
+                        text(label)
+                            .size(design::type_scale::LABEL_UPPER_PX)
+                            .color(pill_color),
+                    )
+                    .on_press(AddressBarMsg::Badge(BadgeEvent::PopoverToggled))
+                    .padding([design::space::S1, design::space::S5])
+                    .style(move |_t, status| {
+                        let a = if matches!(
+                            status,
+                            iced::widget::button::Status::Hovered
+                                | iced::widget::button::Status::Pressed
+                        ) {
+                            0.28_f32
+                        } else {
+                            0.16_f32
+                        };
+                        iced::widget::button::Style {
+                            background: Some(iced::Background::Color(iced::Color::from_rgba(
+                                ar, ag, ab, a,
+                            ))),
+                            text_color: pill_color,
+                            border: pill_border,
+                            shadow: iced::Shadow::default(),
+                            snap: false,
+                        }
+                    })
+                    .into()
+                },
+                palette,
+            ),
             BadgeMode::Strict => {
                 // L41: non-interactive terracotta "Strict" pill. Non-customizable.
                 // Filled shield signals the tab IS strict (contrast with outlined chip).
@@ -823,22 +843,19 @@ impl AddressBar {
         let convert_chip: Option<Element<AddressBarMsg>> = if self.show_convert_chip() {
             let chip_bg_a = if chip_hovered { 0.32_f32 } else { 0.18_f32 };
             let chip_border_a = if chip_hovered { 0.60_f32 } else { 0.40_f32 };
-            let chip_text = iced::Color::from_rgb(0.957, 0.729, 0.627);
+            let [ct_r, ct_g, ct_b, _] = design::palette::STRICT;
+            let chip_text = iced::Color::from_rgb(ct_r, ct_g, ct_b);
 
-            let dismiss = button(
-                text("\u{00D7}")
-                    .size(11.0)
-                    .color(iced::Color::from_rgba(0.54, 0.42, 0.35, 1.0)),
-            )
-            .on_press(AddressBarMsg::DismissConvertChip)
-            .padding([0.0, design::space::S1])
-            .style(move |_t, _s| iced::widget::button::Style {
-                background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                text_color: iced::Color::from_rgba(0.54, 0.42, 0.35, 1.0),
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
-                snap: false,
-            });
+            let dismiss = button(text("\u{00D7}").size(11.0).color(chip_text))
+                .on_press(AddressBarMsg::DismissConvertChip)
+                .padding([0.0, design::space::S1])
+                .style(move |_t, _s| iced::widget::button::Style {
+                    background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                    text_color: chip_text,
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                });
 
             // Outlined shield on the chip — signals "not yet Strict, this converts it".
             let shield_handle = iced::widget::svg::Handle::from_memory(
@@ -915,7 +932,7 @@ impl AddressBar {
                             iced::widget::row![
                                 text(domain)
                                     .size(design::type_scale::BODY_SM_PX)
-                                    .color(iced::Color::from_rgb(0.847, 0.855, 0.878))
+                                    .color(iced::Color::from_rgb(mr, mg, mb))
                                     .width(Length::Fill),
                                 container(
                                     text(count.to_string())
@@ -982,9 +999,10 @@ impl AddressBar {
                     .width(Length::Fill)
                     .height(Length::Fixed(1.0))
                     .style(move |_t| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgba(
-                            1.0, 0.98, 0.94, 0.07,
-                        ))),
+                        background: Some(iced::Background::Color({
+                            let [r, g, b, a] = palette.button_border;
+                            iced::Color::from_rgba(r, g, b, a)
+                        })),
                         border: iced::Border::default(),
                         text_color: None,
                         shadow: iced::Shadow::default(),
@@ -996,9 +1014,10 @@ impl AddressBar {
                     .width(Length::Fill)
                     .height(Length::Fixed(1.0))
                     .style(move |_t| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgba(
-                            1.0, 0.98, 0.94, 0.07,
-                        ))),
+                        background: Some(iced::Background::Color({
+                            let [r, g, b, a] = palette.button_border;
+                            iced::Color::from_rgba(r, g, b, a)
+                        })),
                         border: iced::Border::default(),
                         text_color: None,
                         shadow: iced::Shadow::default(),
@@ -1055,11 +1074,10 @@ impl AddressBar {
                     }),
                 );
 
+                let glass_bg = popover_glass_bg(palette);
                 let popup = container(col).width(Length::Fixed(280.0)).style(move |_t| {
                     iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgba(
-                            0.055, 0.071, 0.118, 0.96,
-                        ))),
+                        background: Some(iced::Background::Color(glass_bg)),
                         border: iced::Border {
                             color: iced::Color::from_rgba(ar, ag, ab, 0.25),
                             width: 1.5,
@@ -1076,7 +1094,7 @@ impl AddressBar {
                 });
 
                 Some(
-                    container(popup)
+                    container(iced::widget::opaque(popup))
                         .width(Length::Fixed(bar_width))
                         .align_x(iced::alignment::Horizontal::Right)
                         .into(),
@@ -1097,7 +1115,8 @@ impl AddressBar {
         // Border is a Stack overlay so it renders ON TOP of the GlassPanel canvas,
         // not underneath it (which would make it invisible).
         let glass = GlassPanel {
-            tint_rgba: design::palette::GLASS_TINT_DARK,
+            tint_rgba: palette.glass_tint,
+            reduced_rgba: palette.glass_reduced,
             blur_sigma_px: design::glass::URL_BAR_BLUR_SIGMA,
             saturate: design::glass::URL_BAR_SATURATE,
             corner_radius_px: design::radius::CAPSULE_PX,
@@ -1114,7 +1133,10 @@ impl AddressBar {
             .style(move |_t| iced::widget::container::Style {
                 background: None,
                 border: iced::Border {
-                    color: iced::Color::from_rgba(1.0, 0.98, 0.94, 0.14),
+                    color: {
+                        let [r, g, b, a] = palette.button_border;
+                        iced::Color::from_rgba(r, g, b, a * 1.6)
+                    },
                     width: 1.0,
                     radius: design::radius::CAPSULE_PX.into(),
                 },
@@ -1156,7 +1178,8 @@ impl AddressBar {
             },
             text_color: None,
             shadow: iced::Shadow {
-                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                // Light theme (gtr ≈ 1.0): softer shadow; dark (gtr ≈ 0.08): full weight.
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, if gtr > 0.5 { 0.12 } else { 0.35 }),
                 offset: iced::Vector::new(0.0, 12.0),
                 blur_radius: 30.0,
             },
@@ -1249,7 +1272,11 @@ impl AddressBar {
     /// The shell places this in the window-level Stack so it overlays content
     /// without affecting the layout of the address bar or anything below it.
     /// `bar_width` must match the value passed to `view()`.
-    pub fn view_strict_popup(&self, bar_width: f32) -> Option<Element<'_, AddressBarMsg>> {
+    pub fn view_strict_popup(
+        &self,
+        bar_width: f32,
+        palette: &'static crate::design::Palette,
+    ) -> Option<Element<'_, AddressBarMsg>> {
         // Keep popup visible while: hovering chip, cursor is inside popup, or
         // the 150 ms grace period after chip-exit hasn't elapsed yet (lets slow
         // users move cursor from chip to popup without it vanishing).
@@ -1261,49 +1288,51 @@ impl AddressBar {
             return None;
         }
         let [sr, sg, sb, _] = design::palette::STRICT;
+        let [pmr, pmg, pmb, _] = palette.text_muted;
+        let [ppr, ppg, ppb, _] = palette.text_primary;
 
         let popup = container(
             column![
                 column![
                     text("Strict mode (higher privacy)")
                         .size(design::type_scale::BODY_LG_PX)
-                        .color(iced::Color::from_rgb(0.957, 0.729, 0.627)),
+                        .color(iced::Color::from_rgb(sr, sg, sb)),
                     text("recommended for banking, sensitive sites")
                         .size(design::type_scale::BODY_SM_PX)
-                        .color(iced::Color::from_rgb(0.784, 0.659, 0.596)),
+                        .color(iced::Color::from_rgb(pmr, pmg, pmb)),
                 ]
                 .spacing(design::space::S1),
                 text("Opens this page in a new tab with extra privacy protections. Original tab stays unchanged.")
                     .size(design::type_scale::BODY_SM_PX)
-                    .color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                    .color(iced::Color::from_rgb(pmr, pmg, pmb)),
                 column![
                     row![
                         text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                        text("Separate cookies & storage from this site").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                        text("Separate cookies & storage from this site").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(pmr, pmg, pmb)),
                     ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
                     row![
                         text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                        text("No browsing history saved").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                        text("No browsing history saved").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(pmr, pmg, pmb)),
                     ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
                     row![
                         text("\u{2713}").size(12.0).color(iced::Color::from_rgb(0.353, 0.541, 0.431)),
-                        text("Maximum fingerprint protection").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(0.847, 0.855, 0.878)),
+                        text("Maximum fingerprint protection").size(design::type_scale::BODY_SM_PX).color(iced::Color::from_rgb(pmr, pmg, pmb)),
                     ].spacing(design::space::S3).align_y(iced::alignment::Vertical::Center),
                 ]
                 .spacing(design::space::S2),
                 container(
                     row![
-                        text("\u{2139}").size(11.0).color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
+                        text("\u{2139}").size(11.0).color(iced::Color::from_rgb(sr, sg, sb)),
                         text("Close the tab to exit Strict mode")
                             .size(design::type_scale::BODY_SM_PX)
-                            .color(iced::Color::from_rgb(0.910, 0.729, 0.627)),
+                            .color(iced::Color::from_rgb(sr, sg, sb)),
                     ]
                     .spacing(design::space::S2)
                     .align_y(iced::alignment::Vertical::Center),
                 )
                 .padding([design::space::S3, design::space::S4])
                 .style(move |_t| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, 0.15))),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, 0.10))),
                     border: iced::Border { color: iced::Color::TRANSPARENT, width: 0.0, radius: design::radius::BUTTON_PX.into() },
                     text_color: None,
                     shadow: iced::Shadow::default(),
@@ -1313,7 +1342,7 @@ impl AddressBar {
                     iced::widget::container(
                         text("Make it Strict")
                             .size(design::type_scale::BODY_LG_PX)
-                            .color(iced::Color::from_rgb(0.957, 0.729, 0.627)),
+                            .color(iced::Color::from_rgb(ppr, ppg, ppb)),
                     )
                     .width(Length::Fill)
                     .center_x(Length::Fill)
@@ -1327,7 +1356,7 @@ impl AddressBar {
                     iced::widget::button::Style {
                         background: Some(iced::Background::Color(iced::Color::from_rgba(sr, sg, sb, a))),
                         border: iced::Border { color: iced::Color::from_rgba(sr, sg, sb, 0.50), width: 1.0, radius: design::radius::BUTTON_PX.into() },
-                        text_color: iced::Color::from_rgb(0.957, 0.729, 0.627),
+                        text_color: iced::Color::from_rgb(ppr, ppg, ppb),
                         shadow: iced::Shadow::default(),
                         snap: false,
                     }
@@ -1337,8 +1366,10 @@ impl AddressBar {
         )
         .width(Length::Fixed(300.0))
         .padding([design::space::S6, design::space::S6])
-        .style(move |_t| iced::widget::container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgba(0.055, 0.071, 0.118, 0.96))),
+        .style(move |_t| {
+            let glass_bg = popover_glass_bg(palette);
+            iced::widget::container::Style {
+            background: Some(iced::Background::Color(glass_bg)),
             border: iced::Border {
                 color: iced::Color::from_rgba(sr, sg, sb, 0.40),
                 width: 1.5,
@@ -1351,13 +1382,14 @@ impl AddressBar {
                 blur_radius: 60.0,
             },
             snap: false,
-        });
+        }});
 
-        // Wrap in mouse_area so moving into the popup keeps it visible.
-        // ConvertPopupEntered/Exited update convert_popup_hovered in state.
+        // Outer mouse_area: enter/exit track cursor for popup visibility.
+        // opaque() on popup: calls shell.capture_event() on button presses so
+        // they don't reach Stack layers below (tab bar, sidebar, etc.).
         Some(
             iced::widget::mouse_area(
-                container(popup)
+                container(iced::widget::opaque(popup))
                     .width(Length::Fixed(bar_width))
                     .align_x(iced::alignment::Horizontal::Right),
             )
@@ -1371,13 +1403,17 @@ impl AddressBar {
     ///
     /// The shell places this in the window-level Stack so it overlays content
     /// without pushing the tab bar or other layout down.
-    pub fn view_badge_popover(&self, bar_width: f32) -> Option<Element<'_, AddressBarMsg>> {
+    pub fn view_badge_popover(
+        &self,
+        bar_width: f32,
+        palette: &'static crate::design::Palette,
+    ) -> Option<Element<'_, AddressBarMsg>> {
         if !self.badge.popover_open || self.badge.rows.is_empty() {
             return None;
         }
         let [ar, ag, ab, _] = design::palette::ACCENT;
         let [sr, sg, sb, _] = design::palette::STRICT;
-        let [mr, mg, mb, _] = design::palette::TEXT_MUTED_DARK;
+        let [mr, mg, mb, _] = palette.text_muted;
         let is_strict = self.mode == Mode::Strict;
         let (pr, pg, pb) = if is_strict {
             (sr, sg, sb)
@@ -1401,7 +1437,7 @@ impl AddressBar {
                     iced::widget::row![
                         text(domain)
                             .size(design::type_scale::BODY_SM_PX)
-                            .color(iced::Color::from_rgb(0.847, 0.855, 0.878))
+                            .color(iced::Color::from_rgb(mr, mg, mb))
                             .width(Length::Fill),
                         container(
                             text(count.to_string())
@@ -1462,13 +1498,14 @@ impl AddressBar {
         })
         .into();
 
+        let [sbr, sbg, sbb, sba] = palette.button_border;
         let sep = |_: ()| -> Element<AddressBarMsg> {
             container(text(""))
                 .width(Length::Fill)
                 .height(Length::Fixed(1.0))
-                .style(|_t| iced::widget::container::Style {
+                .style(move |_t| iced::widget::container::Style {
                     background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        1.0, 0.98, 0.94, 0.07,
+                        sbr, sbg, sbb, sba,
                     ))),
                     ..Default::default()
                 })
@@ -1523,11 +1560,10 @@ impl AddressBar {
             }),
         );
 
+        let glass_bg = popover_glass_bg(palette);
         let popup = container(col).width(Length::Fixed(280.0)).style(move |_t| {
             iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    0.055, 0.071, 0.118, 0.96,
-                ))),
+                background: Some(iced::Background::Color(glass_bg)),
                 border: iced::Border {
                     color: iced::Color::from_rgba(ar, ag, ab, 0.25),
                     width: 1.5,
@@ -1544,7 +1580,7 @@ impl AddressBar {
         });
 
         Some(
-            container(popup)
+            container(iced::widget::opaque(popup))
                 .width(Length::Fixed(bar_width))
                 .align_x(iced::alignment::Horizontal::Right)
                 .into(),
@@ -1802,15 +1838,49 @@ pub enum AddressBarMsg {
     Noop,
 }
 
+/// Replicate `GlassProgram`'s two-layer compositing for dynamic-height
+/// popovers where a fixed-size `GlassPanel` canvas is impractical.
+///
+/// `GlassPanel::panel` draws: (1) saturation-boosted tint fill at alpha `a`,
+/// then (2) raw tint overlay at alpha `a * 0.65`. This composites both layers
+/// into one `Color` that is visually identical to what the canvas would render.
+/// When iced exposes the compositor texture and real blur is wired, this helper
+/// can be replaced with a proper `Stack + GlassPanel` construction.
+fn popover_glass_bg(palette: &'static crate::design::Palette) -> iced::Color {
+    let [r, g, b, a] = palette.glass_tint;
+    let sat = crate::design::glass::PANEL_SATURATE;
+    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let sr = (lum + (r - lum) * sat).clamp(0.0, 1.0);
+    let sg = (lum + (g - lum) * sat).clamp(0.0, 1.0);
+    let sb = (lum + (b - lum) * sat).clamp(0.0, 1.0);
+    // Alpha-over composite: base fill (sr,sg,sb,a) under tint overlay (r,g,b,a*0.65).
+    let a2 = a * 0.65;
+    let a_out = a2 + a * (1.0 - a2);
+    if a_out <= 0.0 {
+        return iced::Color::TRANSPARENT;
+    }
+    let ro = (r * a2 + sr * a * (1.0 - a2)) / a_out;
+    let go = (g * a2 + sg * a * (1.0 - a2)) / a_out;
+    let bo = (b * a2 + sb * a * (1.0 - a2)) / a_out;
+    iced::Color::from_rgba(
+        ro.clamp(0.0, 1.0),
+        go.clamp(0.0, 1.0),
+        bo.clamp(0.0, 1.0),
+        a_out.clamp(0.0, 1.0),
+    )
+}
+
 fn chrome_tip<'a>(
     label: &'static str,
     el: iced::Element<'a, AddressBarMsg>,
+    palette: &'static crate::design::Palette,
 ) -> iced::Element<'a, AddressBarMsg> {
     use iced::widget::{container, text, tooltip};
+    let [tr, tg, tb, _] = palette.text_primary;
     let card = container(text(label).size(12.0).color(iced::Color {
-        r: 0.933,
-        g: 0.941,
-        b: 0.961,
+        r: tr,
+        g: tg,
+        b: tb,
         a: 1.0,
     }))
     .padding(iced::Padding {
@@ -1819,7 +1889,7 @@ fn chrome_tip<'a>(
         bottom: 5.0,
         left: 8.0,
     })
-    .style(|_| chrome_tip_card_style());
+    .style(move |_| chrome_tip_card_style(palette));
     tooltip(el, card, tooltip::Position::Bottom)
         .gap(4.0)
         .delay(std::time::Duration::from_secs(1))
@@ -1827,11 +1897,14 @@ fn chrome_tip<'a>(
         .into()
 }
 
-fn chrome_tip_card_style() -> iced::widget::container::Style {
+fn chrome_tip_card_style(
+    palette: &'static crate::design::Palette,
+) -> iced::widget::container::Style {
     use iced::{Background, Border, Color, Gradient, Shadow, Vector};
+    let [r, g, b, _] = palette.glass_tint;
     let bg = iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-        .add_stop(0.0, Color::from_rgba(0.133, 0.149, 0.204, 0.86))
-        .add_stop(1.0, Color::from_rgba(0.110, 0.125, 0.173, 0.82));
+        .add_stop(0.0, Color::from_rgba(r, g, b, 0.86))
+        .add_stop(1.0, Color::from_rgba(r, g, b, 0.82));
     iced::widget::container::Style {
         background: Some(Background::Gradient(Gradient::Linear(bg))),
         border: Border {

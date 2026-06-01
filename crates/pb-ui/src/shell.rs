@@ -35,6 +35,8 @@ use iced::{
 use tokio::sync::mpsc;
 
 use crate::design;
+use crate::design::{palette_for, ThemeVariant};
+use pb_config::Theme as AppTheme;
 // VibrancyAdapter imported here for future wiring; shell queries it to decide
 // whether to skip the in-app blur pass (Module 42 TODO item).
 #[allow(unused_imports)]
@@ -92,6 +94,10 @@ pub struct AppState {
     pub reduced_transparency: bool,
     /// OS `prefers-reduced-motion` flag. When true, mode morph duration = 0.
     pub reduced_motion: bool,
+    /// Resolved display theme — set once at startup from pb_config::UiConfig.theme.
+    pub theme: ThemeVariant,
+    /// Color palette for the resolved theme. Points to DARK_PALETTE or LIGHT_PALETTE.
+    pub palette: &'static design::Palette,
     /// Elapsed ms since a mode-convert morph started.
     morph_elapsed_ms: u32,
     /// Sends application-level commands to chrome module subscribers (Modules 43-64).
@@ -104,8 +110,28 @@ pub struct AppState {
     pub sidebar: crate::sidebar::Sidebar,
 }
 
+fn detect_os_theme() -> ThemeVariant {
+    match dark_light::detect() {
+        Ok(dark_light::Mode::Light) => ThemeVariant::Light,
+        Ok(dark_light::Mode::Dark) => ThemeVariant::Dark,
+        Ok(dark_light::Mode::Unspecified) => ThemeVariant::Dark,
+        // Detection failed — default to Dark.
+        Err(_) => ThemeVariant::Dark,
+    }
+}
+
 impl AppState {
-    fn new(profile_name: String, command_tx: Arc<mpsc::Sender<ChromeCommand>>) -> Self {
+    fn new(
+        profile_name: String,
+        command_tx: Arc<mpsc::Sender<ChromeCommand>>,
+        app_theme: AppTheme,
+    ) -> Self {
+        let theme = match app_theme {
+            AppTheme::System => detect_os_theme(),
+            AppTheme::Dark => ThemeVariant::Dark,
+            AppTheme::Light => ThemeVariant::Light,
+        };
+        let palette = palette_for(theme);
         Self {
             mode: Mode::Standard,
             phase: AppPhase::Starting,
@@ -117,6 +143,8 @@ impl AppState {
             is_fullscreen: false,
             reduced_transparency: false,
             reduced_motion: false,
+            theme,
+            palette,
             morph_elapsed_ms: 0,
             command_tx,
             address_bar: crate::address_bar::AddressBar::new_stub(Mode::Standard),
@@ -211,7 +239,8 @@ pub enum Message {
 
 fn boot() -> (AppState, Task<Message>) {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(64);
-    let state = AppState::new("default".to_string(), Arc::new(tx));
+    // TODO Module 80: load pb_config::Config and pass config.ui.theme here.
+    let state = AppState::new("default".to_string(), Arc::new(tx), AppTheme::Dark);
     // Immediately emit a simulated profile-loaded message so the shell
     // transitions to Ready without blocking the event loop.
     // In Phase 11 the orchestrator (Module 80) drives this via IPC.
@@ -244,7 +273,7 @@ fn sync_active_tab_mode(state: &mut AppState) {
 #[cfg(test)]
 pub(crate) fn ready_state_for_test() -> AppState {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx));
+    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx), AppTheme::Dark);
     let _ = update(
         &mut state,
         Message::ProfileLoaded("regression-user".to_string()),
@@ -476,13 +505,18 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
 
 pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
     let corner_radius = if state.is_fullscreen { 0.0 } else { 12.0 };
-    let wallpaper = wallpaper_canvas(state.mode, state.reduced_transparency, corner_radius)
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let wallpaper = wallpaper_canvas(
+        state.mode,
+        state.reduced_transparency,
+        corner_radius,
+        state.palette,
+    )
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     let strip = state
         .tab_bar
-        .view_strip(state.window_width)
+        .view_strip(state.window_width, state.palette)
         .map(Message::TabBar);
 
     let sidebar_w = design::layout::SIDEBAR_COLLAPSED_PX;
@@ -503,6 +537,7 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
             state.reduced_transparency,
             sidebar_bottom_pad,
             state.window_height,
+            state.palette,
         )
         .map(Message::Sidebar);
 
@@ -549,7 +584,7 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    if let Some(modal) = state.tab_bar.view_strict_close_modal() {
+    if let Some(modal) = state.tab_bar.view_strict_close_modal(state.palette) {
         main_stack = main_stack.push(
             container(modal.map(Message::TabBar))
                 .width(Length::Fill)
@@ -676,7 +711,8 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
                     title: tab.title.clone(),
                     strict: tab.mode == Mode::Strict,
                 };
-                let card = crate::sidebar::tooltip_card_element(meta).map(Message::Sidebar);
+                let card =
+                    crate::sidebar::tooltip_card_element(meta, state.palette).map(Message::Sidebar);
                 // card_height estimate: 34px (8+8 padding + 18 content).
                 let card_h_half = 17.0_f32;
                 let top = (cy - card_h_half).max(0.0);
@@ -690,7 +726,10 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         }
     }
 
-    if let Some(popup) = state.address_bar.view_strict_popup(bar_width) {
+    if let Some(popup) = state
+        .address_bar
+        .view_strict_popup(bar_width, state.palette)
+    {
         main_stack = main_stack.push(
             container(popup.map(Message::AddressBar))
                 .padding(iced::Padding::new(0.0).top(popup_top).left(sidebar_w))
@@ -700,7 +739,10 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         );
     }
 
-    if let Some(popup) = state.address_bar.view_badge_popover(bar_width) {
+    if let Some(popup) = state
+        .address_bar
+        .view_badge_popover(bar_width, state.palette)
+    {
         main_stack = main_stack.push(
             container(popup.map(Message::AddressBar))
                 .padding(iced::Padding::new(0.0).top(popup_top).left(sidebar_w))
@@ -798,8 +840,11 @@ fn title(state: &AppState) -> String {
     format!("DevBrowse — {mode_label}")
 }
 
-fn theme(_state: &AppState) -> Theme {
-    Theme::Dark
+fn theme(state: &AppState) -> Theme {
+    match state.theme {
+        ThemeVariant::Dark => Theme::Dark,
+        ThemeVariant::Light => Theme::Light,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -816,11 +861,13 @@ fn wallpaper_canvas(
     mode: Mode,
     reduced: bool,
     corner_radius: f32,
+    palette: &'static design::Palette,
 ) -> Canvas<WallpaperProgram, Message> {
     Canvas::new(WallpaperProgram {
         mode,
         reduced_transparency: reduced,
         corner_radius,
+        palette,
     })
 }
 
@@ -830,6 +877,7 @@ struct WallpaperProgram {
     /// 12 px when windowed (transparent corners produce rounded window),
     /// 0 in fullscreen (fills the display edge-to-edge).
     corner_radius: f32,
+    palette: &'static design::Palette,
 }
 
 impl canvas::Program<Message> for WallpaperProgram {
@@ -854,13 +902,11 @@ impl canvas::Program<Message> for WallpaperProgram {
         match self.mode {
             Mode::Standard => {
                 if self.reduced_transparency {
-                    // §3.4 solid fallback for Standard.
-                    let [r, g, b, _] = design::palette::STANDARD_WALLPAPER_SOLID;
+                    let [r, g, b, _] = self.palette.wallpaper_solid;
                     frame.fill(&bg_path, Color::from_rgba(r, g, b, 1.0));
                 } else {
-                    // Deep navy linear gradient top-left → bottom-right.
-                    let [sr, sg, sb, _] = design::palette::BG_DEEP_DARK_START;
-                    let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
+                    let [sr, sg, sb, _] = self.palette.wallpaper_start;
+                    let [er, eg, eb, _] = self.palette.wallpaper_end;
                     let grad = canvas_gradient::Linear::new(
                         iced::Point::ORIGIN,
                         iced::Point::new(bounds.width, bounds.height),
@@ -875,11 +921,11 @@ impl canvas::Program<Message> for WallpaperProgram {
                 // in view() (above main_row) so it appears on top of the
                 // sidebar. Only the gradient wallpaper is drawn here.
                 if self.reduced_transparency {
-                    let [r, g, b, _] = design::palette::STRICT_WALLPAPER_START;
+                    let [r, g, b, _] = self.palette.strict_wallpaper_start;
                     frame.fill(&bg_path, Color::from_rgba(r, g, b, 1.0));
                 } else {
-                    let [sr, sg, sb, _] = design::palette::STRICT_WALLPAPER_START;
-                    let [er, eg, eb, _] = design::palette::BG_DEEP_DARK_END;
+                    let [sr, sg, sb, _] = self.palette.strict_wallpaper_start;
+                    let [er, eg, eb, _] = self.palette.strict_wallpaper_end;
                     let grad = canvas_gradient::Linear::new(
                         iced::Point::ORIGIN,
                         iced::Point::new(bounds.width, bounds.height),
@@ -915,7 +961,7 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
     let address_bar = container(
         state
             .address_bar
-            .view(state.window_width * 0.40)
+            .view(state.window_width * 0.40, state.palette)
             .map(Message::AddressBar),
     )
     .width(Length::Fill)
@@ -923,9 +969,14 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
     .height(Length::Shrink);
 
     // Module 44: identity capsule + tabs-pill — right-aligned overlay.
-    let top_chrome = container(state.tab_bar.view_top_chrome().map(Message::TabBar))
-        .width(Length::Fill)
-        .height(Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX));
+    let top_chrome = container(
+        state
+            .tab_bar
+            .view_top_chrome(state.palette)
+            .map(Message::TabBar),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(design::layout::TOP_BAR_HEIGHT_PX));
 
     // Stack overlays top chrome on top of the address bar so the address bar
     // stays truly centered regardless of right-side pill widths.
@@ -942,7 +993,7 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
     if state.tab_bar.position == crate::tab_bar::TabBarPosition::Top {
         let top_strip = state
             .tab_bar
-            .view_strip(state.window_width)
+            .view_strip(state.window_width, state.palette)
             .map(Message::TabBar);
         col = col
             .push(iced::widget::Space::new().height(design::space::S4))
@@ -1013,7 +1064,7 @@ mod tests {
     #[test]
     fn boot_state_starts_as_standard_starting() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("test".to_string(), Arc::new(tx));
+        let state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         assert_eq!(state.mode, Mode::Standard);
         assert_eq!(state.phase, AppPhase::Starting);
     }
@@ -1021,7 +1072,7 @@ mod tests {
     #[test]
     fn profile_loaded_transitions_to_ready() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx));
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         let _ = update(&mut state, Message::ProfileLoaded("alice".to_string()));
         assert_eq!(state.phase, AppPhase::Ready);
         assert_eq!(state.profile_name, "alice");
@@ -1030,7 +1081,7 @@ mod tests {
     #[test]
     fn convert_to_strict_only_from_ready_standard() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx));
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         // While in Starting phase, convert is a no-op.
         let _ = update(&mut state, Message::ConvertToStrict);
         assert_eq!(state.mode, Mode::Standard);
@@ -1047,7 +1098,7 @@ mod tests {
         // §3.6: once Strict, ConvertToStrict is the only mode message; there
         // is no reverse. Sending ConvertToStrict in Strict stays Strict.
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx));
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         state.mode = Mode::Strict;
         state.phase = AppPhase::Ready;
         let _ = update(&mut state, Message::ConvertToStrict);
@@ -1058,7 +1109,7 @@ mod tests {
     #[test]
     fn morph_tick_completes_at_token_duration() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx));
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
         // One tick at the full duration.
@@ -1071,7 +1122,7 @@ mod tests {
     #[test]
     fn reduced_motion_makes_morph_instant() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx));
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
         state.reduced_motion = true;
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
@@ -1083,7 +1134,7 @@ mod tests {
     #[test]
     fn narration_label_does_not_expose_internals() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("alice".to_string(), Arc::new(tx));
+        let state = AppState::new("alice".to_string(), Arc::new(tx), AppTheme::Dark);
         let label = state.narration_label();
         // Label must contain mode and profile name but not any file path.
         assert!(label.contains("Standard"));

@@ -16,8 +16,9 @@ serde     = { workspace = true }
 serde_json = { workspace = true }
 # Phase 8 Module 42 — Iced 0.14 + wgpu backend (architecture v1.24 stack lock).
 # "wgpu" feature enables the custom Shader widget used by pb-ui::glass.
-iced  = { workspace = true }
-wgpu  = { workspace = true }
+iced       = { workspace = true }
+wgpu       = { workspace = true }
+dark-light = { workspace = true }
 
 [[bin]]
 name = "devbrowse_ui"

@@ -1,63 +1,56 @@
 ## Approach
-- dont all existing files before writing. read if and only if context needed.
+- Read files only when context is needed; never preload.
 - Thorough in reasoning, concise in output.
 - Skip files over 100KB unless required.
 - No sycophantic openers or closing fluff.
-- Use prior context only when directly relevant.
-- Otherwise do not go back to previous chat until it is asked to go back after request.
-- Comment out consistant to-do in each files so you have context for later sessions so we are not losing any contaxt.
-- When editing a file, scan its existing TODOs first: address any whose owner is the current module; leave TODOs targeting other modules / phases / future work alone.
-- Test placement: co-locate unit tests + cohort-lock value tests + address-identity (`std::ptr::eq`) tests in each source file's `#[cfg(test)] mod tests` block. Land cross-module coupling regressions in `pb-testkit/tests/` (not in a sibling `pb-fingerprint/tests/` directory). Phase 10 adversarial-fingerprint suite belongs entirely in `pb-testkit/tests/`.
 - No emojis or em-dashes.
-- Do not guess APIs, versions, flags, commit SHAs, or package names. Verify by reading code or docs before asserting.
+- Do not guess APIs, versions, flags, commit SHAs, or package names — verify first.
+- **Before implementing any module: `grep -n "TODO Module <N>" <target-files>` and read every matching TODO. These carry wiring points, edge cases, and deferred decisions from prior sessions. Address TODOs owned by the current module; leave all others untouched.**
+- **When looking up design or architecture docs: `grep` for the section first, then `Read` with `offset`+`limit`. Never read an entire file to find one fact.**
+- Test placement: unit tests in each file's `#[cfg(test)] mod tests` block. Cross-module coupling regressions in `pb-testkit/tests/`. Phase 10 adversarial suite in `pb-testkit/tests/` only.
 
 ## Session start
-Reading order, phase index, glossaries, and the canonical acceptance-criteria checklist live in `project-plan/README.md` §"How to use this folder" + §"Acceptance criteria for declaring a module `done`". Open that first; do not duplicate its content here.
+Open `project-plan/README.md` first — reading order, phase index, glossaries, and acceptance criteria live there.
 
-## Plan files (project-plan/)
-- The master plan is split phase-by-phase under `project-plan/`. Root `plan.md` is a pointer file only.
-- **Phase boundary discipline:** when a phase is fully `done` (all modules + Phase exit gate), start the next phase in a fresh chat. Re-read README + the next phase file fresh; the plan files plus architecture + memory + code are a complete handoff bundle.
-- **Carry-forward exception:** only carry information across the chat clear if a genuinely new and important step has been taken that is not yet captured in the plan files, the architecture docs, or the auto-memory. In that case, write it to the appropriate place **before** ending the session (see end-of-session checkpoint below) so future sessions can recover it without chat history.
+**Phase boundary:** when a phase is fully done (all modules + exit gate), start the next phase in a fresh chat. Re-read README + the next phase file. Plan files + architecture + memory + code are the full handoff; do not rely on chat history.
 
 ## Per-module status report ritual
-After each module's acceptance criteria pass (cargo check + test + clippy `-D warnings`, cross-platform build, doc comment), post a concise status report and wait for explicit approval before advancing. Format:
+After each module's acceptance criteria pass (cargo check + test + clippy `-D warnings`), post a concise status report and wait for explicit approval before advancing.
 
+**For UI modules:** also run the application and visually confirm the window renders before flipping status. Cargo green does not mean the UI works.
+
+Format:
 ```
 Module N — <name> — done
 - Files: <crates/.../*.rs paths>
 - Tests added: <count> (<one-line summary>)
-- Edge cases covered: <list from phase file Edge cases section>
+- Edge cases covered: <list from phase file>
 - Architecture invariants enforced: <L-numbers>
 - cargo check / test / clippy: green
-- Status flipped in: project-plan/phase-N-*.md (and README status snapshot)
-- Notes / surprises: <anything that should be in plan or memory but isn't yet>
+- Status flipped in: project-plan/phase-N-*.md + README snapshot
+- Notes / surprises: <anything new to flush>
 ```
 
-The "Notes / surprises" line feeds the end-of-session checkpoint update related phase file like did in previous files.
-
 ## Module status updates on green tests
-- When all acceptance criteria for a module pass, update that module's status in its phase file from `(next)` to `done` in the same commit as the code change.
-- Promote the next pending module to `(next)` so the plan keeps exactly one `(next)` marker across all phase files.
-- Refresh the **Status snapshot** section at the bottom of `project-plan/README.md` in the same commit (move the just-finished module from "Next" / pending list to "Done").
-- This mirrors the convention used through Phases 1-3 (Modules 1-18) and is now codified as part of the acceptance criteria.
+- Flip the module's status in its phase file from `(next)` to `done`.
+- Promote the next pending module to `(next)` — exactly one `(next)` across all phase files.
+- Update the README status snapshot in the same commit.
 
-## End-of-session checkpoint (before clearing context)
-Before ending a chat, audit every item below. Flush anything not yet captured to the canonical place. Do **not** rely on chat history to carry it forward.
+## End-of-session checkpoint
+Before ending a chat, flush everything to the canonical place:
 
-| Type of insight | Lands in |
+| Insight | Destination |
 |---|---|
-| Architectural decision (new lock, refined invariant) | `docs/architecture.md` revision log entry + body update |
-| Threat-model adjustment (new attacker shape, new mitigation) | `docs/threat-model.md` (and revision log) |
-| Edge case discovered while implementing | The active module's "Edge cases" section in the phase file |
-| Test that was demonstrated to flake | Comment in the test file naming the flake mode |
-| User feedback / lock / preference | Auto-memory file under `~/.claude/projects/.../memory/` + MEMORY.md index |
-| Cross-phase coupling discovered | The "Dependencies" line of both modules + a note in `pb-testkit` (Module 0.5) for the cross-phase fixture |
-| Mid-module work-in-progress | TODO comments in the file (already mandated above) + uncommitted code |
+| Architectural decision | `docs/architecture.md` revision log |
+| Threat-model change | `docs/threat-model.md` |
+| Edge case discovered | Phase file "Edge cases" section |
+| Flaky test | Comment in the test file |
+| User feedback / preference | Auto-memory + MEMORY.md |
+| Cross-phase coupling | Dependencies line of both modules + pb-testkit note |
+| Work in progress | TODO comments in the file |
 
-If a session ends without flushing, the next session will rediscover the issue or, worse, miss it. The plan + docs + memory + code is the canonical handoff; the chat is not.
+## UI design docs (docs/ui/)
+Write one only when the feature has two or more of: non-trivial state machine, multiple sub-components, L-invariant enforcement, async pipeline, cross-module event boundary. Simple widgets and style changes do not need one.
 
 ## Phase exit cumulative test gate
-The cumulative-gate checklist (commands + Phase 10 adversarial-suite rule + pb-testkit cross-phase contract tests) lives in `project-plan/README.md` §"Phase exit — cumulative test gate". Run it at every Phase N exit before claiming any Phase N+1 module.
-
-</content>
-</invoke>
+Checklist lives in `project-plan/README.md` §"Phase exit — cumulative test gate". Run it before starting any module in the next phase.
