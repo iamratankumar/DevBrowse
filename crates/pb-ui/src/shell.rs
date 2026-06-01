@@ -108,6 +108,8 @@ pub struct AppState {
     pub tab_bar: crate::tab_bar::TabBar,
     /// Module 44.3 — vertical pill sidebar.
     pub sidebar: crate::sidebar::Sidebar,
+    /// Module 44.6 — full-screen tab manager.
+    pub card_view: crate::card_view::CardView,
 }
 
 fn detect_os_theme() -> ThemeVariant {
@@ -154,6 +156,7 @@ impl AppState {
                 tb
             },
             sidebar: crate::sidebar::Sidebar::new(),
+            card_view: crate::card_view::CardView::new(),
         }
     }
 
@@ -221,6 +224,8 @@ pub enum Message {
     TabBar(crate::tab_bar::TabBarMsg),
     /// Sidebar internal message (Module 44.3).
     Sidebar(crate::sidebar::SidebarMsg),
+    /// Tab screen internal message (Module 44.6).
+    CardView(crate::card_view::CardViewMsg),
     /// Global cursor position during a tab/sidebar drag (from the full-window
     /// capture layer). Allows dragging outside the widget's own mouse_area.
     GlobalDragMove(iced::Point),
@@ -407,6 +412,9 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                             return window::drag(id);
                         }
                     }
+                    crate::tab_bar::TabBarEvent::TabScreenRequested => {
+                        state.card_view.open(state.tab_bar.tabs.len());
+                    }
                     crate::tab_bar::TabBarEvent::StabilizeRequested(gen) => {
                         // 400 ms from the *last* close. Each close stamps a new
                         // generation; stale timers from earlier closes are
@@ -474,6 +482,25 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                             },
                             |_| Message::HideTooltip,
                         );
+                    }
+                }
+            }
+        }
+        Message::CardView(ts_msg) => {
+            use crate::card_view::CardViewEvent;
+            if let Some(event) = state.card_view.update(ts_msg, &state.tab_bar.tabs) {
+                match event {
+                    CardViewEvent::TabActivated(id) => {
+                        let _ = state
+                            .tab_bar
+                            .update(crate::tab_bar::TabBarMsg::TabActivated(id));
+                        sync_active_tab_mode(state);
+                    }
+                    CardViewEvent::TabCloseRequested(id) => {
+                        let _ = state
+                            .tab_bar
+                            .update(crate::tab_bar::TabBarMsg::TabCloseRequested(id));
+                        sync_active_tab_mode(state);
                     }
                 }
             }
@@ -634,6 +661,11 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
 
     let badge_popup_visible =
         state.address_bar.badge.popover_open && !state.address_bar.badge.rows.is_empty();
+
+    // Tab Screen overlay (Module 44.6 stub — returns None until implemented).
+    if let Some(ts_view) = state.card_view.view(&state.tab_bar.tabs, state.palette) {
+        main_stack = main_stack.push(ts_view.map(Message::CardView));
+    }
 
     // Global drag capture: when a tab-bar or sidebar drag is active, push a
     // full-window mouse_area that tracks cursor movement and mouse-up
@@ -1033,8 +1065,49 @@ fn app_style(_state: &AppState, _theme: &Theme) -> iced::theme::Style {
         text_color: Color::WHITE,
     }
 }
-fn subscription(_state: &AppState) -> iced::Subscription<Message> {
-    window::resize_events().map(|(id, size)| Message::WindowResized(id, size))
+fn subscription(state: &AppState) -> iced::Subscription<Message> {
+    let resize = window::resize_events().map(|(id, size)| Message::WindowResized(id, size));
+
+    if state.card_view.open {
+        let kb = iced::keyboard::listen().map(|event| {
+            use crate::card_view::{CardNavKey, CardViewMsg};
+            use iced::keyboard::{key::Named, Event, Key};
+            match event {
+                Event::KeyPressed {
+                    key: Key::Named(Named::Escape),
+                    ..
+                } => Message::CardView(CardViewMsg::Close),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowLeft),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Left)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowRight),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Right)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowUp),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Up)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowDown),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Down)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::Enter),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Enter)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::Delete | Named::Backspace),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Close)),
+                _ => Message::None,
+            }
+        });
+        iced::Subscription::batch([resize, kb])
+    } else {
+        resize
+    }
 }
 
 fn window_settings() -> window::Settings {

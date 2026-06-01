@@ -46,23 +46,29 @@ impl canvas::Program<TabBarMsg> for TabsCanvas {
             }
         }
 
-        let press_changed = match event {
+        let mut needs_redraw = hover_changed;
+        let mut message: Option<TabBarMsg> = None;
+
+        match event {
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
                 if hovered =>
             {
                 state.pressed = true;
-                true
+                needs_redraw = true;
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
                 if state.pressed =>
             {
                 state.pressed = false;
-                true
+                message = Some(TabBarMsg::TabsGridPressed);
             }
-            _ => false,
-        };
+            _ => {}
+        }
 
-        if hover_changed || press_changed {
+        if let Some(msg) = message {
+            // publish() always triggers a redraw internally.
+            Some(canvas::Action::publish(msg))
+        } else if needs_redraw {
             Some(canvas::Action::request_redraw())
         } else {
             None

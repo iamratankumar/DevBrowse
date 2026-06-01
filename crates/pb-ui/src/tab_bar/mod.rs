@@ -58,6 +58,8 @@ pub struct TabEntry {
     /// Dominant colour sampled from the site's favicon [r, g, b, a] 0-1.
     /// None until the favicon loads. Used to tint the inactive sidebar pill.
     pub accent_color: Option<[f32; 4]>,
+    /// Display URL shown on card view cards. Phase 11 replaces with live URL.
+    pub url: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,9 @@ pub enum TabBarMsg {
     /// a previous close and is silently discarded.
     StabilizeExpired(u32),
 
+    /// Tabs-pill grid button clicked — shell opens the Tab Screen.
+    TabsGridPressed,
+
     // Kept for tests — not emitted by the view.
     TabActivated(usize),
     TabCloseRequested(usize),
@@ -115,6 +120,8 @@ pub enum TabBarEvent {
     /// Strip X-button close fired; shell must schedule a 400 ms StabilizeExpired
     /// carrying this generation number.
     StabilizeRequested(u32),
+    /// Tabs-pill grid button clicked — shell opens the Tab Screen (Module 44.6).
+    TabScreenRequested,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +233,8 @@ impl TabBar {
                 is_pinned: false,
                 is_muted: false,
                 has_unsaved_input: false,
-                accent_color: Some([0.133, 0.133, 0.133, 1.0]), // GitHub dark
+                accent_color: Some([0.133, 0.133, 0.133, 1.0]),
+                url: "https://github.com".into(),
             },
             TabEntry {
                 id: 1,
@@ -236,7 +244,8 @@ impl TabBar {
                 is_pinned: false,
                 is_muted: false,
                 has_unsaved_input: false,
-                accent_color: Some([0.627, 0.322, 1.0, 1.0]), // Figma purple
+                accent_color: Some([0.627, 0.322, 1.0, 1.0]),
+                url: "https://figma.com".into(),
             },
             TabEntry {
                 id: 2,
@@ -246,7 +255,8 @@ impl TabBar {
                 is_pinned: false,
                 is_muted: false,
                 has_unsaved_input: false,
-                accent_color: Some([0.133, 0.133, 0.133, 1.0]), // GitHub dark
+                accent_color: Some([0.133, 0.133, 0.133, 1.0]),
+                url: "https://github.com/devbrowse".into(),
             },
             TabEntry {
                 id: 3,
@@ -256,7 +266,8 @@ impl TabBar {
                 is_pinned: false,
                 is_muted: true,
                 has_unsaved_input: false,
-                accent_color: Some([0.847, 0.067, 0.102, 1.0]), // NYT red
+                accent_color: Some([0.847, 0.067, 0.102, 1.0]),
+                url: "https://nytimes.com/opinion".into(),
             },
             TabEntry {
                 id: 4,
@@ -267,6 +278,7 @@ impl TabBar {
                 is_muted: false,
                 has_unsaved_input: true,
                 accent_color: None,
+                url: "https://bank.example".into(),
             },
         ]
     }
@@ -526,6 +538,7 @@ impl TabBar {
                     is_muted: false,
                     has_unsaved_input: false,
                     accent_color: None,
+                    url: String::new(),
                 });
                 self.active_id = new_id;
                 self.mode = Mode::Standard;
@@ -533,6 +546,7 @@ impl TabBar {
                 Some(TabBarEvent::NewTabRequested)
             }
             TabBarMsg::Noop => None,
+            TabBarMsg::TabsGridPressed => Some(TabBarEvent::TabScreenRequested),
             TabBarMsg::StabilizeExpired(gen) => {
                 // Discard if a newer close has already superseded this timer.
                 if gen == self.stabilize_generation {
@@ -786,6 +800,7 @@ mod tests {
                 is_muted: false,
                 has_unsaved_input: false,
                 accent_color: None,
+                url: String::new(),
             });
         }
         let (active_px, other_px) = tb.chip_widths();
@@ -798,5 +813,12 @@ mod tests {
             total_chips <= max_chip_area + 0.5,
             "chips {total_chips:.1} exceed available {max_chip_area:.1}"
         );
+    }
+
+    #[test]
+    fn tabs_grid_pressed_emits_tab_screen_requested() {
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        let event = tb.update(TabBarMsg::TabsGridPressed);
+        assert!(matches!(event, Some(TabBarEvent::TabScreenRequested)));
     }
 }

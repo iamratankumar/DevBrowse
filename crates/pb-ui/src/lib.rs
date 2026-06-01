@@ -29,6 +29,7 @@ pub mod vibrancy; // VibrancyAdapter trait + NoOpVibrancy stub
 // ── Modules 43-64 — pending; stubs only ────────────────────────────────────
 pub mod address_bar;
 pub mod bookmarks;
+pub mod card_view;
 pub mod devtools;
 pub mod downloads;
 pub mod file_picker;
