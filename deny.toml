@@ -14,6 +14,10 @@ ignore  = [
     # We do not call paste directly; risk is confined to the Metal GPU backend.
     # Re-evaluate when wgpu drops or replaces the dep.
     { id = "RUSTSEC-2024-0436" },
+    # RUSTSEC-2025-0052: `async-std` has been discontinued. No safe upgrade exists.
+    # Pulled in transitively by dark-light v2.0.0 -> async-std for Linux D-Bus detection.
+    # We do not call async-std directly. Re-evaluate when dark-light drops this dep.
+    { id = "RUSTSEC-2025-0052" },
 ]
 
 [licenses]
