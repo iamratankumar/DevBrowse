@@ -1382,7 +1382,7 @@ mod tests {
     fn drag_highlight_follows_dragged_item_not_displaced_item() {
         let mut s = super::Sidebar::new();
         start_drag(&mut s, 1); // drag tab id=1
-        // Enter tab id=2: swap 1↔2. Highlight must be on 1 (dragged), not 2 (displaced).
+                               // Enter tab id=2: swap 1↔2. Highlight must be on 1 (dragged), not 2 (displaced).
         let _ = s.update(super::SidebarMsg::PillEntered(2));
         assert_eq!(
             s.drag_hovered_id,

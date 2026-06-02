@@ -239,12 +239,14 @@ impl NewTabPage {
                 }
                 None
             }
-            NewTabMsg::FavoritePressed(idx) => {
-                self.favorites.get(idx).map(|f| NewTabEvent::OpenUrl(f.url.clone()))
-            }
-            NewTabMsg::FavoriteOpenStrict(idx) => {
-                self.favorites.get(idx).map(|f| NewTabEvent::OpenUrlStrict(f.url.clone()))
-            }
+            NewTabMsg::FavoritePressed(idx) => self
+                .favorites
+                .get(idx)
+                .map(|f| NewTabEvent::OpenUrl(f.url.clone())),
+            NewTabMsg::FavoriteOpenStrict(idx) => self
+                .favorites
+                .get(idx)
+                .map(|f| NewTabEvent::OpenUrlStrict(f.url.clone())),
             NewTabMsg::ResumeSessionPressed => {
                 self.session_resume.clone().map(NewTabEvent::ResumeSession)
             }
@@ -298,9 +300,7 @@ impl NewTabPage {
         let doodle_el = self.doodle.view(palette, self.mode);
 
         // ── session label — doodle name, dim, above greeting ─────────────────
-        let label_el = text(self.doodle.name())
-            .size(11)
-            .color(text_dim);
+        let label_el = text(self.doodle.name()).size(11).color(text_dim);
 
         // ── greeting (chrome-side clock — anti-fingerprint) ───────────────────
         let display_name = if profile_name.is_empty() || profile_name == "default" {
@@ -392,9 +392,9 @@ impl NewTabPage {
                             _ => bi_a,
                         };
                         iced::widget::button::Style {
-                            background: Some(iced::Background::Color(
-                                iced::Color::from_rgba(bi_r, bi_g, bi_b, hover_a),
-                            )),
+                            background: Some(iced::Background::Color(iced::Color::from_rgba(
+                                bi_r, bi_g, bi_b, hover_a,
+                            ))),
                             border: iced::Border {
                                 color: iced::Color::from_rgba(bb_r, bb_g, bb_b, bb_a),
                                 width: 1.0,
@@ -418,9 +418,12 @@ impl NewTabPage {
             text("·").size(10).color(text_dim),
             text("0 NTP requests").size(10).color(text_dim),
             text("·").size(10).color(text_dim),
-            text(format!("{} fingerprint stops", self.stats.fingerprint_stops))
-                .size(10)
-                .color(text_dim),
+            text(format!(
+                "{} fingerprint stops",
+                self.stats.fingerprint_stops
+            ))
+            .size(10)
+            .color(text_dim),
         ]
         .spacing(6)
         .align_y(Alignment::Center)
@@ -439,22 +442,20 @@ impl NewTabPage {
                         ]
                         .spacing(2),
                         iced::widget::Space::new().width(Length::Fill),
-                        iced::widget::button(
-                            text("Resume session").size(11).color(accent),
-                        )
-                        .on_press(NewTabMsg::ResumeSessionPressed)
-                        .style(move |_theme, _status| iced::widget::button::Style {
-                            background: Some(iced::Background::Color(
-                                iced::Color::from_rgba(ac_r, ac_g, ac_b, 0.18),
-                            )),
-                            border: iced::Border {
-                                color: iced::Color::from_rgba(ac_r, ac_g, ac_b, 0.3),
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                        .padding([4, 10]),
+                        iced::widget::button(text("Resume session").size(11).color(accent),)
+                            .on_press(NewTabMsg::ResumeSessionPressed)
+                            .style(move |_theme, _status| iced::widget::button::Style {
+                                background: Some(iced::Background::Color(iced::Color::from_rgba(
+                                    ac_r, ac_g, ac_b, 0.18
+                                ),)),
+                                border: iced::Border {
+                                    color: iced::Color::from_rgba(ac_r, ac_g, ac_b, 0.3),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..Default::default()
+                            })
+                            .padding([4, 10]),
                     ]
                     .align_y(Alignment::Center),
                 )
@@ -476,7 +477,15 @@ impl NewTabPage {
         };
 
         // ── assemble ──────────────────────────────────────────────────────────
-        let mut col = column![doodle_el, label_el, greeting, primary_bar, fav_row, stats_row].spacing(12);
+        let mut col = column![
+            doodle_el,
+            label_el,
+            greeting,
+            primary_bar,
+            fav_row,
+            stats_row
+        ]
+        .spacing(12);
         if let Some(resume) = resume_el {
             col = col.push(resume);
         }
@@ -484,11 +493,15 @@ impl NewTabPage {
         // FillPortion 1:4 → top spacer takes 20 % of available height.
         Some(
             iced::widget::column![
-                iced::widget::Space::new().width(Length::Fill).height(Length::FillPortion(1)),
+                iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::FillPortion(1)),
                 container(col.width(content_width))
                     .width(Length::Fill)
                     .align_x(iced::alignment::Horizontal::Center),
-                iced::widget::Space::new().width(Length::Fill).height(Length::FillPortion(2)),
+                iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::FillPortion(2)),
             ]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -530,8 +543,14 @@ mod tests {
 
     fn favs() -> Vec<FavEntry> {
         vec![
-            FavEntry { name: "DDG".into(), url: "https://duckduckgo.com".into() },
-            FavEntry { name: "GitHub".into(), url: "https://github.com".into() },
+            FavEntry {
+                name: "DDG".into(),
+                url: "https://duckduckgo.com".into(),
+            },
+            FavEntry {
+                name: "GitHub".into(),
+                url: "https://github.com".into(),
+            },
         ]
     }
 
@@ -571,7 +590,10 @@ mod tests {
         let mut ntp = std_ntp();
         ntp.update(NewTabMsg::FavoritesLoaded(favs()));
         let ev = ntp.update(NewTabMsg::FavoritePressed(0));
-        assert_eq!(ev, Some(NewTabEvent::OpenUrl("https://duckduckgo.com".into())));
+        assert_eq!(
+            ev,
+            Some(NewTabEvent::OpenUrl("https://duckduckgo.com".into()))
+        );
     }
 
     #[test]
@@ -586,7 +608,10 @@ mod tests {
         let mut ntp = std_ntp();
         ntp.update(NewTabMsg::FavoritesLoaded(favs()));
         let ev = ntp.update(NewTabMsg::FavoriteOpenStrict(1));
-        assert_eq!(ev, Some(NewTabEvent::OpenUrlStrict("https://github.com".into())));
+        assert_eq!(
+            ev,
+            Some(NewTabEvent::OpenUrlStrict("https://github.com".into()))
+        );
     }
 
     // ── session resume ────────────────────────────────────────────────────────
@@ -594,7 +619,10 @@ mod tests {
     #[test]
     fn session_resume_loaded_stored_in_standard_mode() {
         let mut ntp = std_ntp();
-        let resume = SessionResume { tab_count: 5, topic: "Rust / Iced".into() };
+        let resume = SessionResume {
+            tab_count: 5,
+            topic: "Rust / Iced".into(),
+        };
         ntp.update(NewTabMsg::SessionResumeLoaded(Some(resume.clone())));
         assert_eq!(ntp.session_resume, Some(resume));
     }
@@ -602,7 +630,10 @@ mod tests {
     #[test]
     fn session_resume_ignored_in_strict_mode() {
         let mut ntp = strict_ntp();
-        let resume = SessionResume { tab_count: 3, topic: "Research".into() };
+        let resume = SessionResume {
+            tab_count: 3,
+            topic: "Research".into(),
+        };
         ntp.update(NewTabMsg::SessionResumeLoaded(Some(resume)));
         assert_eq!(ntp.session_resume, None);
     }
@@ -630,7 +661,10 @@ mod tests {
     #[test]
     fn resume_session_pressed_emits_event() {
         let mut ntp = std_ntp();
-        let resume = SessionResume { tab_count: 4, topic: "DevBrowse".into() };
+        let resume = SessionResume {
+            tab_count: 4,
+            topic: "DevBrowse".into(),
+        };
         ntp.update(NewTabMsg::SessionResumeLoaded(Some(resume.clone())));
         let ev = ntp.update(NewTabMsg::ResumeSessionPressed);
         assert_eq!(ev, Some(NewTabEvent::ResumeSession(resume)));

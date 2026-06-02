@@ -306,7 +306,9 @@ fn sync_active_tab_mode(state: &mut AppState) {
         state.tab_bar.sync_mode(new_mode, &pname);
         // Reset address bar chip + URL for the newly active tab.
         // Empty URL → fresh tab chip shows; non-empty → URL shown, chip hidden.
-        state.address_bar.reset_for_tab(state.tab_bar.active_id, &tab_url, new_mode);
+        state
+            .address_bar
+            .reset_for_tab(state.tab_bar.active_id, &tab_url, new_mode);
         state.new_tab.sync_mode(new_mode);
     }
 }
@@ -316,7 +318,13 @@ fn sync_active_tab_mode(state: &mut AppState) {
 #[cfg(test)]
 pub(crate) fn ready_state_for_test() -> AppState {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx), AppTheme::Light, true, pb_config::SearchEngine::DuckDuckGo);
+    let mut state = AppState::new(
+        "regression-user".to_string(),
+        Arc::new(tx),
+        AppTheme::Light,
+        true,
+        pb_config::SearchEngine::DuckDuckGo,
+    );
     let _ = update(
         &mut state,
         Message::ProfileLoaded("regression-user".to_string()),
@@ -344,7 +352,9 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
             // Transition NTP out of Loading with an empty favourites stub until
             // Module 80 wires the real pb-storage fetch.
             // TODO Module 80: replace with real favourites from pb-storage.
-            state.new_tab.update(crate::new_tab_screen::NewTabMsg::FavoritesLoaded(vec![]));
+            state
+                .new_tab
+                .update(crate::new_tab_screen::NewTabMsg::FavoritesLoaded(vec![]));
             // Sync address bar chip + mode for the active tab now that we are
             // Ready. Without this, the chip stays FreshTab (its default) on
             // tabs that already have a URL when the app opens.
@@ -484,7 +494,9 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         // TODO Module 44 wiring: create new tab (Phase 11, Module 80)
                         // Apply session label and reset address bar for the new tab.
                         stamp_start_page_title(state);
-                        state.address_bar.reset_for_tab(state.tab_bar.active_id, "", state.mode);
+                        state
+                            .address_bar
+                            .reset_for_tab(state.tab_bar.active_id, "", state.mode);
                     }
                     crate::tab_bar::TabBarEvent::WindowDragRequested => {
                         if let Some(id) = state.window_id {
@@ -537,7 +549,9 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                             .tab_bar
                             .update(crate::tab_bar::TabBarMsg::NewTabPressed);
                         stamp_start_page_title(state);
-                        state.address_bar.reset_for_tab(state.tab_bar.active_id, "", state.mode);
+                        state
+                            .address_bar
+                            .reset_for_tab(state.tab_bar.active_id, "", state.mode);
                     }
                     crate::sidebar::SidebarEvent::SearchRequested => {
                         // TODO Module 44.3 wiring: command bar pre-filled /tab (Module 64.13)
@@ -701,14 +715,15 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
 
     // Content column: naturally starts at x=52 because of the Row sibling.
     // NTP occupies the fill space between chrome and the tab strip.
-    let ntp_or_fill: iced::Element<'_, Message> =
-        if let Some(ntp_el) = state.new_tab.view(state.window_width, state.profile_name(), state.palette) {
-            ntp_el.map(Message::NewTab)
-        } else {
-            iced::widget::Space::new()
-                .height(Length::Fill)
-                .into()
-        };
+    let ntp_or_fill: iced::Element<'_, Message> = if let Some(ntp_el) =
+        state
+            .new_tab
+            .view(state.window_width, state.profile_name(), state.palette)
+    {
+        ntp_el.map(Message::NewTab)
+    } else {
+        iced::widget::Space::new().height(Length::Fill).into()
+    };
 
     let content_column = match state.tab_bar.position {
         crate::tab_bar::TabBarPosition::Bottom => Column::new()
@@ -1163,10 +1178,7 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
 
     // chrome_placeholder owns only the top chrome bar (address bar + identity capsule).
     // Tab strip and NTP are laid out in content_column (see view()).
-    Column::new()
-        .width(Length::Fill)
-        .push(top_bar)
-        .into()
+    Column::new().width(Length::Fill).push(top_bar).into()
 }
 
 // ---------------------------------------------------------------------------
@@ -1208,20 +1220,34 @@ fn subscription(state: &AppState) -> iced::Subscription<Message> {
             use crate::card_view::{CardNavKey, CardViewMsg};
             use iced::keyboard::{key::Named, Event, Key};
             match event {
-                Event::KeyPressed { key: Key::Named(Named::Escape), .. } =>
-                    Message::CardView(CardViewMsg::Close),
-                Event::KeyPressed { key: Key::Named(Named::ArrowLeft), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Left)),
-                Event::KeyPressed { key: Key::Named(Named::ArrowRight), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Right)),
-                Event::KeyPressed { key: Key::Named(Named::ArrowUp), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Up)),
-                Event::KeyPressed { key: Key::Named(Named::ArrowDown), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Down)),
-                Event::KeyPressed { key: Key::Named(Named::Enter), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Enter)),
-                Event::KeyPressed { key: Key::Named(Named::Delete | Named::Backspace), .. } =>
-                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Close)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::Escape),
+                    ..
+                } => Message::CardView(CardViewMsg::Close),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowLeft),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Left)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowRight),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Right)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowUp),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Up)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowDown),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Down)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::Enter),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Enter)),
+                Event::KeyPressed {
+                    key: Key::Named(Named::Delete | Named::Backspace),
+                    ..
+                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Close)),
                 _ => Message::None,
             }
         }))
@@ -1289,7 +1315,13 @@ mod tests {
     #[test]
     fn boot_state_starts_as_standard_starting() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         assert_eq!(state.mode, Mode::Standard);
         assert_eq!(state.phase, AppPhase::Starting);
     }
@@ -1297,7 +1329,13 @@ mod tests {
     #[test]
     fn profile_loaded_transitions_to_ready() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let mut state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         let _ = update(&mut state, Message::ProfileLoaded("alice".to_string()));
         assert_eq!(state.phase, AppPhase::Ready);
         assert_eq!(state.profile_name, "alice");
@@ -1306,7 +1344,13 @@ mod tests {
     #[test]
     fn convert_to_strict_only_from_ready_standard() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let mut state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         // While in Starting phase, convert is a no-op.
         let _ = update(&mut state, Message::ConvertToStrict);
         assert_eq!(state.mode, Mode::Standard);
@@ -1323,7 +1367,13 @@ mod tests {
         // §3.6: once Strict, ConvertToStrict is the only mode message; there
         // is no reverse. Sending ConvertToStrict in Strict stays Strict.
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let mut state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         state.mode = Mode::Strict;
         state.phase = AppPhase::Ready;
         let _ = update(&mut state, Message::ConvertToStrict);
@@ -1334,7 +1384,13 @@ mod tests {
     #[test]
     fn morph_tick_completes_at_token_duration() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let mut state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
         // One tick at the full duration.
@@ -1347,7 +1403,13 @@ mod tests {
     #[test]
     fn reduced_motion_makes_morph_instant() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let mut state = AppState::new(
+            "test".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         state.reduced_motion = true;
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
@@ -1359,7 +1421,13 @@ mod tests {
     #[test]
     fn narration_label_does_not_expose_internals() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("alice".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
+        let state = AppState::new(
+            "alice".to_string(),
+            Arc::new(tx),
+            AppTheme::Dark,
+            true,
+            pb_config::SearchEngine::DuckDuckGo,
+        );
         let label = state.narration_label();
         // Label must contain mode and profile name but not any file path.
         assert!(label.contains("Standard"));

@@ -11,11 +11,25 @@ use crate::new_tab_screen::NewTabMsg;
 use crate::shell::Mode;
 
 // ── accent constants ─────────────────────────────────────────────────────────
-const A1: Color = Color { r: 0.910, g: 0.475, b: 0.976, a: 1.0 }; // #e879f9
-const A2: Color = Color { r: 0.984, g: 0.750, b: 0.141, a: 1.0 }; // #fbbf24
+const A1: Color = Color {
+    r: 0.910,
+    g: 0.475,
+    b: 0.976,
+    a: 1.0,
+}; // #e879f9
+const A2: Color = Color {
+    r: 0.984,
+    g: 0.750,
+    b: 0.141,
+    a: 1.0,
+}; // #fbbf24
 
-fn a1(a: f32) -> Color { Color { a, ..A1 } }
-fn a2(a: f32) -> Color { Color { a, ..A2 } }
+fn a1(a: f32) -> Color {
+    Color { a, ..A1 }
+}
+fn a2(a: f32) -> Color {
+    Color { a, ..A2 }
+}
 
 // ── public cache handle ───────────────────────────────────────────────────────
 pub struct CompassCache {
@@ -24,7 +38,9 @@ pub struct CompassCache {
 
 impl CompassCache {
     pub fn new() -> Self {
-        Self { cache: Cache::new() }
+        Self {
+            cache: Cache::new(),
+        }
     }
 }
 
@@ -81,12 +97,21 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     let stroke_alpha = if is_dark { 0.55_f32 } else { 0.45_f32 };
     let [sr, sg, sb, _] = palette.text_primary;
     let sc = |a: f32| Color::from_rgba(sr, sg, sb, a * stroke_alpha / 0.55);
-    let a1 = |a: f32| Color { a: (a * dim).min(1.0), ..A1 };
-    let a2 = |a: f32| Color { a: (a * dim).min(1.0), ..A2 };
+    let a1 = |a: f32| Color {
+        a: (a * dim).min(1.0),
+        ..A1
+    };
+    let a2 = |a: f32| Color {
+        a: (a * dim).min(1.0),
+        ..A2
+    };
     // Dim strokes too — multiply incoming color alpha.
     let solid = |col: Color, w: f32| {
         Stroke::default()
-            .with_color(Color { a: col.a * dim, ..col })
+            .with_color(Color {
+                a: col.a * dim,
+                ..col
+            })
             .with_width(w)
     };
 
@@ -208,10 +233,10 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
         max_width: f32::INFINITY,
     };
 
-    frame.fill_text(letter("N", cx,          cy - 67.0, a1(0.85)));
-    frame.fill_text(letter("S", cx,          cy + 69.0, sc(0.5)));
-    frame.fill_text(letter("W", cx - 69.0,   cy + 1.0,  sc(0.5)));
-    frame.fill_text(letter("E", cx + 69.0,   cy + 1.0,  a2(0.85)));
+    frame.fill_text(letter("N", cx, cy - 67.0, a1(0.85)));
+    frame.fill_text(letter("S", cx, cy + 69.0, sc(0.5)));
+    frame.fill_text(letter("W", cx - 69.0, cy + 1.0, sc(0.5)));
+    frame.fill_text(letter("E", cx + 69.0, cy + 1.0, a2(0.85)));
 
     // ── Sun at East (shining toward the E needle) ─────────────────────────────
     draw_sun(frame, Point::new(cx + 118.0, cy - 12.0), &solid);
@@ -227,16 +252,28 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
 
 /// Gradient vignette that fades canvas edges to the wallpaper colour.
 /// Amber sun with layered glow and 8 rays — placed at `pos` in canvas space.
-fn draw_sun(
-    frame: &mut Frame,
-    pos: Point,
-    solid: &impl Fn(Color, f32) -> Stroke<'static>,
-) {
+fn draw_sun(frame: &mut Frame, pos: Point, solid: &impl Fn(Color, f32) -> Stroke<'static>) {
     // Outer glow halos
     let halo1 = Path::circle(pos, 22.0);
-    frame.fill(&halo1, Color { r: A2.r, g: A2.g, b: A2.b, a: 0.07 });
+    frame.fill(
+        &halo1,
+        Color {
+            r: A2.r,
+            g: A2.g,
+            b: A2.b,
+            a: 0.07,
+        },
+    );
     let halo2 = Path::circle(pos, 16.0);
-    frame.fill(&halo2, Color { r: A2.r, g: A2.g, b: A2.b, a: 0.13 });
+    frame.fill(
+        &halo2,
+        Color {
+            r: A2.r,
+            g: A2.g,
+            b: A2.b,
+            a: 0.13,
+        },
+    );
 
     // 8 rays: pairs at 0°, 45°, 90°, 135° + their opposites
     let ray_angles: [f32; 8] = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0];
@@ -247,8 +284,14 @@ fn draw_sun(
         let outer = if deg % 90.0 == 0.0 { 22.0 } else { 18.0 }; // cardinal rays longer
         let p1 = Point::new(pos.x + c * inner, pos.y + s * inner);
         let p2 = Point::new(pos.x + c * outer, pos.y + s * outer);
-        let ray = Path::new(|b| { b.move_to(p1); b.line_to(p2); });
-        frame.stroke(&ray, solid(a2(0.75), if deg % 90.0 == 0.0 { 1.8 } else { 1.2 }));
+        let ray = Path::new(|b| {
+            b.move_to(p1);
+            b.line_to(p2);
+        });
+        frame.stroke(
+            &ray,
+            solid(a2(0.75), if deg % 90.0 == 0.0 { 1.8 } else { 1.2 }),
+        );
     }
 
     // Sun body
@@ -275,7 +318,15 @@ fn draw_astronaut(
 
         // Helmet
         let helmet = Path::circle(Point::new(0.0, -11.0), 7.0);
-        f.fill(&helmet, Color { r: sc(0.18).r, g: sc(0.18).g, b: sc(0.18).b, a: 0.18 });
+        f.fill(
+            &helmet,
+            Color {
+                r: sc(0.18).r,
+                g: sc(0.18).g,
+                b: sc(0.18).b,
+                a: 0.18,
+            },
+        );
         f.stroke(&helmet, solid(sc(0.7), 1.5));
 
         // Gold visor
@@ -291,7 +342,15 @@ fn draw_astronaut(
             b.line_to(Point::new(-5.0, 8.0));
             b.close();
         });
-        f.fill(&torso, Color { r: sc(0.15).r, g: sc(0.15).g, b: sc(0.15).b, a: 0.15 });
+        f.fill(
+            &torso,
+            Color {
+                r: sc(0.15).r,
+                g: sc(0.15).g,
+                b: sc(0.15).b,
+                a: 0.15,
+            },
+        );
         f.stroke(&torso, solid(sc(0.65), 1.4));
 
         // Chest panel dot
@@ -328,10 +387,26 @@ fn draw_astronaut(
 
         // Boots
         let lboot = Path::circle(Point::new(-4.0, 19.0), 3.0);
-        f.fill(&lboot, Color { r: sc(0.22).r, g: sc(0.22).g, b: sc(0.22).b, a: 0.22 });
+        f.fill(
+            &lboot,
+            Color {
+                r: sc(0.22).r,
+                g: sc(0.22).g,
+                b: sc(0.22).b,
+                a: 0.22,
+            },
+        );
         f.stroke(&lboot, solid(sc(0.5), 1.0));
         let rboot = Path::circle(Point::new(4.0, 19.0), 3.0);
-        f.fill(&rboot, Color { r: sc(0.22).r, g: sc(0.22).g, b: sc(0.22).b, a: 0.22 });
+        f.fill(
+            &rboot,
+            Color {
+                r: sc(0.22).r,
+                g: sc(0.22).g,
+                b: sc(0.22).b,
+                a: 0.22,
+            },
+        );
         f.stroke(&rboot, solid(sc(0.5), 1.0));
     });
 }
@@ -398,7 +473,10 @@ fn draw_strict(frame: &mut Frame, size: Size, palette: &'static Palette) {
         (cx - 37.0, cy + 37.0, cx - 31.0, cy + 31.0),
         (cx + 37.0, cy + 37.0, cx + 31.0, cy + 31.0),
     ] {
-        let t_path = Path::new(|b| { b.move_to(Point::new(x1, y1)); b.line_to(Point::new(x2, y2)); });
+        let t_path = Path::new(|b| {
+            b.move_to(Point::new(x1, y1));
+            b.line_to(Point::new(x2, y2));
+        });
         frame.stroke(&t_path, solid(sc(0.3), 1.0));
     }
 
@@ -416,10 +494,10 @@ fn draw_strict(frame: &mut Frame, size: Size, palette: &'static Palette) {
         shaping: iced::widget::text::Shaping::Basic,
         max_width: f32::INFINITY,
     };
-    frame.fill_text(letter("N", cx,        cy - 67.0, t(0.85)));
-    frame.fill_text(letter("S", cx,        cy + 69.0, sc(0.45)));
-    frame.fill_text(letter("W", cx - 69.0, cy + 1.0,  sc(0.45)));
-    frame.fill_text(letter("E", cx + 69.0, cy + 1.0,  sc(0.45)));
+    frame.fill_text(letter("N", cx, cy - 67.0, t(0.85)));
+    frame.fill_text(letter("S", cx, cy + 69.0, sc(0.45)));
+    frame.fill_text(letter("W", cx - 69.0, cy + 1.0, sc(0.45)));
+    frame.fill_text(letter("E", cx + 69.0, cy + 1.0, sc(0.45)));
 
     // ── Padlock at center (replaces jewel) ────────────────────────────────────
     draw_padlock(frame, Point::new(cx, cy), &solid, &t, &sc);

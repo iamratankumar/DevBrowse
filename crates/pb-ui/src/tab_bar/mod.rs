@@ -882,8 +882,18 @@ mod tests {
         let mut tb = TabBar::new(TabBarPosition::Bottom);
         let stub = tb.tabs[0].clone();
         tb.tabs = vec![
-            TabEntry { id: 10, mode: Mode::Standard, has_unsaved_input: false, ..stub.clone() },
-            TabEntry { id: 11, mode: Mode::Standard, has_unsaved_input: false, ..stub },
+            TabEntry {
+                id: 10,
+                mode: Mode::Standard,
+                has_unsaved_input: false,
+                ..stub.clone()
+            },
+            TabEntry {
+                id: 11,
+                mode: Mode::Standard,
+                has_unsaved_input: false,
+                ..stub
+            },
         ];
         tb.active_id = 10;
         let event = tb.update(TabBarMsg::TabCloseRequested(10));
