@@ -133,11 +133,19 @@ impl Sidebar {
                             //   2. view re-renders: tab A is now physically under the cursor
                             //   3. PillEntered(A) fires → swap(B→A) → stuck at start
                             // With drag_id stable on A, step 3 sees from==to → no swap.
-                            self.drag_hovered_id = Some(to_id);
+                            //
+                            // Highlight the DRAGGED item's new slot (from_id), not the
+                            // displaced item (to_id). This fixes the edge-case where
+                            // dragging to the first or last pill shows the highlight on the
+                            // second-to-last/second pill (the displaced item) instead of the
+                            // actual end position.
+                            self.drag_hovered_id = Some(from_id);
                             return Some(SidebarEvent::TabsReordered { from_id, to_id });
                         } else {
-                            // Cursor re-entered the dragged tab's new slot — clear highlight.
-                            self.drag_hovered_id = None;
+                            // Cursor re-entered the dragged tab's slot after layout reflow
+                            // (the swap moved it under the cursor). Keep the highlight on the
+                            // dragged item so it doesn't flicker off at the edge positions.
+                            self.drag_hovered_id = Some(from_id);
                         }
                     }
                 }
@@ -715,8 +723,8 @@ fn tab_pill(p: PillProps) -> iced::Element<'static, SidebarMsg> {
     // width to the left of the sidebar boundary, show a "tear off" affordance and
     // on mouse-release open the dragged tab in a new window via window::open().
 
-    // Active pill: same blue glow as the active tab chip in the strip.
-    let indicator_shadow = if active && !is_being_dragged {
+    // Active pill glow — dark mode only; suppressed on light background.
+    let indicator_shadow = if active && !is_being_dragged && palette.is_dark() {
         iced::Shadow {
             color: iced::Color::from_rgba(0.357, 0.553, 0.937, 0.45),
             offset: iced::Vector::new(0.0, 0.0),
@@ -960,10 +968,18 @@ fn tip_card_style(palette: &'static crate::design::Palette) -> iced::widget::con
             width: 1.0,
             radius: 11.0.into(),
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
-            offset: Vector::new(0.0, 10.0),
-            blur_radius: 34.0,
+        shadow: if palette.is_dark() {
+            Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                offset: Vector::new(0.0, 10.0),
+                blur_radius: 34.0,
+            }
+        } else {
+            Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                offset: Vector::new(0.0, 4.0),
+                blur_radius: 12.0,
+            }
         },
         ..Default::default()
     }
@@ -1351,5 +1367,56 @@ mod tests {
         assert_eq!(tip.favicon_bg, iced::Color::BLACK);
         assert_eq!(tip.title, "test");
         assert!(!tip.strict);
+    }
+
+    // ── Drag highlight follows dragged item, not displaced item ───────────────
+
+    fn start_drag(s: &mut super::Sidebar, id: usize) {
+        // PillPressed starts drag tracking; SidebarMoved commits it once
+        // the cursor has moved enough (sets self.dragging = true).
+        let _ = s.update(super::SidebarMsg::PillPressed(id));
+        let _ = s.update(super::SidebarMsg::SidebarMoved);
+    }
+
+    #[test]
+    fn drag_highlight_follows_dragged_item_not_displaced_item() {
+        let mut s = super::Sidebar::new();
+        start_drag(&mut s, 1); // drag tab id=1
+        // Enter tab id=2: swap 1↔2. Highlight must be on 1 (dragged), not 2 (displaced).
+        let _ = s.update(super::SidebarMsg::PillEntered(2));
+        assert_eq!(
+            s.drag_hovered_id,
+            Some(1),
+            "highlight should follow the dragged item (id=1), not the displaced item (id=2)"
+        );
+    }
+
+    #[test]
+    fn drag_highlight_kept_when_cursor_reenters_dragged_item_after_reflow() {
+        let mut s = super::Sidebar::new();
+        start_drag(&mut s, 1);
+        // Swap 1↔2 — re-enter the dragged item (layout reflow puts it under cursor).
+        let _ = s.update(super::SidebarMsg::PillEntered(2)); // swap fires
+        let _ = s.update(super::SidebarMsg::PillEntered(1)); // re-enter dragged item
+        assert_eq!(
+            s.drag_hovered_id,
+            Some(1),
+            "highlight must not clear when cursor re-enters the dragged item after reflow"
+        );
+    }
+
+    #[test]
+    fn drag_highlight_reaches_last_pill_position() {
+        let mut s = super::Sidebar::new();
+        start_drag(&mut s, 1);
+        // Simulate dragging item 1 all the way to a far end position (id=5).
+        let _ = s.update(super::SidebarMsg::PillEntered(2));
+        let _ = s.update(super::SidebarMsg::PillEntered(1)); // reflow re-enter
+        let _ = s.update(super::SidebarMsg::PillEntered(5)); // enter last
+        assert_eq!(
+            s.drag_hovered_id,
+            Some(1),
+            "highlight must be on the dragged item even at the last position"
+        );
     }
 }

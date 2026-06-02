@@ -40,6 +40,9 @@ pb-sandbox = { path = "crates/pb-sandbox" }
 # async runtime
 tokio = { version = "1", features = ["full"] }
 
+# local time (greeting, time-aware UI) — clock + std features only; no tz db needed
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 # serialization
 serde = { version = "1", features = ["derive"] }
 toml  = "0.8"

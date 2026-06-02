@@ -104,6 +104,15 @@ pub fn palette_for(v: ThemeVariant) -> &'static Palette {
     }
 }
 
+impl Palette {
+    /// True when this is the dark palette. Use to suppress glows / shadows
+    /// that look harsh on light backgrounds.
+    #[inline]
+    pub fn is_dark(&self) -> bool {
+        std::ptr::eq(self, &DARK_PALETTE)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -110,6 +110,8 @@ pub struct AppState {
     pub sidebar: crate::sidebar::Sidebar,
     /// Module 44.6 — full-screen tab manager.
     pub card_view: crate::card_view::CardView,
+    /// Module 46 — new tab page.
+    pub new_tab: crate::new_tab_screen::NewTabPage,
 }
 
 fn detect_os_theme() -> ThemeVariant {
@@ -127,6 +129,8 @@ impl AppState {
         profile_name: String,
         command_tx: Arc<mpsc::Sender<ChromeCommand>>,
         app_theme: AppTheme,
+        command_bar_enabled: bool,
+        search_engine: pb_config::SearchEngine,
     ) -> Self {
         let theme = match app_theme {
             AppTheme::System => detect_os_theme(),
@@ -157,6 +161,15 @@ impl AppState {
             },
             sidebar: crate::sidebar::Sidebar::new(),
             card_view: crate::card_view::CardView::new(),
+            new_tab: {
+                let mut ntp = crate::new_tab_screen::NewTabPage::new(
+                    Mode::Standard,
+                    command_bar_enabled,
+                    search_engine,
+                );
+                ntp.init_doodle();
+                ntp
+            },
         }
     }
 
@@ -226,6 +239,8 @@ pub enum Message {
     Sidebar(crate::sidebar::SidebarMsg),
     /// Tab screen internal message (Module 44.6).
     CardView(crate::card_view::CardViewMsg),
+    /// New tab page internal message (Module 46).
+    NewTab(crate::new_tab_screen::NewTabMsg),
     /// Global cursor position during a tab/sidebar drag (from the full-window
     /// capture layer). Allows dragging outside the widget's own mouse_area.
     GlobalDragMove(iced::Point),
@@ -244,8 +259,19 @@ pub enum Message {
 
 fn boot() -> (AppState, Task<Message>) {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(64);
-    // TODO Module 80: load pb_config::Config and pass config.ui.theme here.
-    let state = AppState::new("default".to_string(), Arc::new(tx), AppTheme::Dark);
+    // Theme is intentionally hardcoded to Dark here.
+    // TODO Module 80: load pb_config::Config from disk and pass config.ui.theme
+    // so the user's saved preference is used. Until then Dark is the stable
+    // development default — change AppTheme::Dark to AppTheme::Light or
+    // AppTheme::System here to test other themes locally.
+    let cfg = pb_config::Config::default();
+    let state = AppState::new(
+        "default".to_string(),
+        Arc::new(tx),
+        cfg.ui.theme,
+        cfg.ui.command_bar_enabled,
+        cfg.search.default_engine,
+    );
     // Immediately emit a simulated profile-loaded message so the shell
     // transitions to Ready without blocking the event loop.
     // In Phase 11 the orchestrator (Module 80) drives this via IPC.
@@ -256,20 +282,32 @@ fn boot() -> (AppState, Task<Message>) {
 /// Sync `state.mode` (and address bar / tab bar display) to the currently
 /// active tab's mode. Called whenever the active tab changes so the Strict
 /// border, wallpaper, and badge always reflect the tab you're looking at.
+/// Stamp "Start Page" onto the most recently added tab when it has no URL.
+fn stamp_start_page_title(state: &mut AppState) {
+    if let Some(tab) = state.tab_bar.tabs.last_mut() {
+        if tab.url.is_empty() {
+            tab.title = "Start Page".to_string();
+        }
+    }
+}
+
 fn sync_active_tab_mode(state: &mut AppState) {
-    if let Some(tab) = state
+    // Clone the fields we need before the mutable borrow of state.
+    let active = state
         .tab_bar
         .tabs
         .iter()
         .find(|t| t.id == state.tab_bar.active_id)
-    {
-        let new_mode = tab.mode;
-        if state.mode != new_mode {
-            state.mode = new_mode;
-            state.address_bar.sync_mode(new_mode);
-            let pname = state.profile_name().to_string();
-            state.tab_bar.sync_mode(new_mode, &pname);
-        }
+        .map(|t| (t.mode, t.url.clone()));
+
+    if let Some((new_mode, tab_url)) = active {
+        state.mode = new_mode;
+        let pname = state.profile_name().to_string();
+        state.tab_bar.sync_mode(new_mode, &pname);
+        // Reset address bar chip + URL for the newly active tab.
+        // Empty URL → fresh tab chip shows; non-empty → URL shown, chip hidden.
+        state.address_bar.reset_for_tab(state.tab_bar.active_id, &tab_url, new_mode);
+        state.new_tab.sync_mode(new_mode);
     }
 }
 
@@ -278,7 +316,7 @@ fn sync_active_tab_mode(state: &mut AppState) {
 #[cfg(test)]
 pub(crate) fn ready_state_for_test() -> AppState {
     let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx), AppTheme::Dark);
+    let mut state = AppState::new("regression-user".to_string(), Arc::new(tx), AppTheme::Light, true, pb_config::SearchEngine::DuckDuckGo);
     let _ = update(
         &mut state,
         Message::ProfileLoaded("regression-user".to_string()),
@@ -298,6 +336,19 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
             let pname = state.profile_name().to_string();
             state.tab_bar.sync_mode(state.mode, &pname);
             let _ = state.command_tx.try_send(ChromeCommand::ProfileLoaded);
+            for tab in state.tab_bar.tabs.iter_mut() {
+                if tab.url.is_empty() {
+                    tab.title = "Start Page".to_string();
+                }
+            }
+            // Transition NTP out of Loading with an empty favourites stub until
+            // Module 80 wires the real pb-storage fetch.
+            // TODO Module 80: replace with real favourites from pb-storage.
+            state.new_tab.update(crate::new_tab_screen::NewTabMsg::FavoritesLoaded(vec![]));
+            // Sync address bar chip + mode for the active tab now that we are
+            // Ready. Without this, the chip stays FreshTab (its default) on
+            // tabs that already have a URL when the app opens.
+            sync_active_tab_mode(state);
         }
         Message::ProfileLoadFailed => {
             // Fall back to Module 64 wizard. For now keep the Starting phase
@@ -325,6 +376,7 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                     state.address_bar.sync_mode(Mode::Strict);
                     let pname = state.profile_name().to_string();
                     state.tab_bar.sync_mode(Mode::Strict, &pname);
+                    state.new_tab.sync_mode(Mode::Strict);
                     let _ = state
                         .command_tx
                         .try_send(ChromeCommand::ModeChanged(Mode::Strict));
@@ -380,6 +432,7 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         if state.mode == Mode::Standard && state.phase == AppPhase::Ready {
                             state.mode = Mode::Strict;
                             state.address_bar.sync_mode(Mode::Strict);
+                            state.new_tab.sync_mode(Mode::Strict);
                             let pname = state.profile_name().to_string();
                             state.tab_bar.sync_mode(Mode::Strict, &pname);
                             let _ = state
@@ -387,7 +440,19 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                                 .try_send(ChromeCommand::ModeChanged(Mode::Strict));
                         }
                     }
-                    crate::address_bar::AddressBarEvent::NavigationCommitted { .. } => {
+                    crate::address_bar::AddressBarEvent::NavigationCommitted { url, mode } => {
+                        if state.tab_bar.tabs.is_empty() {
+                            // No tabs open — create one and assign the committed URL so
+                            // it survives a subsequent tab switch.
+                            let _ = state
+                                .tab_bar
+                                .update(crate::tab_bar::TabBarMsg::NewTabPressed);
+                            if let Some(tab) = state.tab_bar.tabs.last_mut() {
+                                tab.url = url;
+                                tab.mode = mode;
+                            }
+                            sync_active_tab_mode(state);
+                        }
                         // TODO Module 43 wiring: forward to pb-network NavigationBroker (Phase 11)
                     }
                     crate::address_bar::AddressBarEvent::NetworkViewerRequested => {
@@ -398,14 +463,28 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
             return task.map(Message::AddressBar);
         }
         Message::TabBar(tb_msg) => {
+            let prev_active = state.tab_bar.active_id;
             if let Some(event) = state.tab_bar.update(tb_msg) {
                 match event {
-                    crate::tab_bar::TabBarEvent::TabClosed(_id) => {
+                    crate::tab_bar::TabBarEvent::TabClosed(id) => {
+                        state.address_bar.forget_tab(id);
                         sync_active_tab_mode(state);
                         // TODO Module 44 wiring: notify pb-network::TabBroker (Phase 11, Module 80)
                     }
+                    crate::tab_bar::TabBarEvent::AllTabsClosed => {
+                        // No tabs remain — reset chrome to Standard NTP home state.
+                        state.mode = Mode::Standard;
+                        let pname = state.profile_name().to_string();
+                        state.tab_bar.sync_mode(Mode::Standard, &pname);
+                        state.address_bar.reset_for_tab(0, "", Mode::Standard);
+                        state.new_tab.sync_mode(Mode::Standard);
+                        // TODO Module 80: notify orchestrator that all tabs closed.
+                    }
                     crate::tab_bar::TabBarEvent::NewTabRequested => {
                         // TODO Module 44 wiring: create new tab (Phase 11, Module 80)
+                        // Apply session label and reset address bar for the new tab.
+                        stamp_start_page_title(state);
+                        state.address_bar.reset_for_tab(state.tab_bar.active_id, "", state.mode);
                     }
                     crate::tab_bar::TabBarEvent::WindowDragRequested => {
                         if let Some(id) = state.window_id {
@@ -416,6 +495,13 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         state.card_view.open(state.tab_bar.tabs.len());
                     }
                     crate::tab_bar::TabBarEvent::StabilizeRequested(gen) => {
+                        // Strip close: active_id already points at the successor.
+                        // Sync now — the early return below would bypass the
+                        // post-match active_id check that normally handles this.
+                        if state.tab_bar.active_id != prev_active {
+                            state.address_bar.forget_tab(prev_active);
+                            sync_active_tab_mode(state);
+                        }
                         // 400 ms from the *last* close. Each close stamps a new
                         // generation; stale timers from earlier closes are
                         // discarded when they fire with an outdated generation.
@@ -430,8 +516,12 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                 }
             }
             // StripPressed activates a tab without emitting a TabBarEvent.
-            // Sync unconditionally so switching tabs always updates the mode.
-            sync_active_tab_mode(state);
+            // Only sync when the active tab actually changed — skipping mouse-move
+            // messages (StripMoved) prevents reset_for_tab from undoing a user's
+            // chip dismissal on every cursor movement.
+            if state.tab_bar.active_id != prev_active {
+                sync_active_tab_mode(state);
+            }
         }
         Message::Sidebar(sb_msg) => {
             if let Some(ev) = state.sidebar.update(sb_msg) {
@@ -446,6 +536,8 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         let _ = state
                             .tab_bar
                             .update(crate::tab_bar::TabBarMsg::NewTabPressed);
+                        stamp_start_page_title(state);
+                        state.address_bar.reset_for_tab(state.tab_bar.active_id, "", state.mode);
                     }
                     crate::sidebar::SidebarEvent::SearchRequested => {
                         // TODO Module 44.3 wiring: command bar pre-filled /tab (Module 64.13)
@@ -471,9 +563,22 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                     crate::sidebar::SidebarEvent::TabCloseRequested(id) => {
                         // TODO Module 80: route through TabBroker for Strict-close modal
                         // and renderer teardown. For now, remove the tab directly.
-                        let _ = state
+                        match state
                             .tab_bar
-                            .update(crate::tab_bar::TabBarMsg::TabCloseRequested(id));
+                            .update(crate::tab_bar::TabBarMsg::TabCloseRequested(id))
+                        {
+                            Some(crate::tab_bar::TabBarEvent::AllTabsClosed) => {
+                                state.mode = Mode::Standard;
+                                let pname = state.profile_name().to_string();
+                                state.tab_bar.sync_mode(Mode::Standard, &pname);
+                                state.address_bar.reset_for_tab(0, "", Mode::Standard);
+                                state.new_tab.sync_mode(Mode::Standard);
+                            }
+                            Some(crate::tab_bar::TabBarEvent::TabClosed(_)) => {
+                                sync_active_tab_mode(state);
+                            }
+                            _ => {}
+                        }
                     }
                     crate::sidebar::SidebarEvent::TooltipPillLeft => {
                         return Task::perform(
@@ -505,6 +610,25 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                 }
             }
         }
+        Message::NewTab(nt_msg) => {
+            use crate::new_tab_screen::NewTabEvent;
+            if let Some(event) = state.new_tab.update(nt_msg) {
+                match event {
+                    NewTabEvent::OpenUrl(url) => {
+                        // TODO Module 80: route to NavigationBroker.
+                        let _ = url;
+                    }
+                    NewTabEvent::OpenUrlStrict(url) => {
+                        // TODO Module 80: open new Strict tab and navigate.
+                        let _ = url;
+                    }
+                    NewTabEvent::ResumeSession(resume) => {
+                        // TODO Module 80: restore tab group from session data.
+                        let _ = resume;
+                    }
+                }
+            }
+        }
         Message::HideTooltip => {
             state.sidebar.commit_hide();
         }
@@ -523,6 +647,13 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                 let _ = state
                     .tab_bar
                     .update(crate::tab_bar::TabBarMsg::StripReleased);
+            }
+            if state.sidebar.dragging {
+                // Mouse released outside the sidebar — clear drag state so the
+                // cursor resets and the next sidebar interaction starts fresh.
+                let _ = state
+                    .sidebar
+                    .update(crate::sidebar::SidebarMsg::SidebarReleased);
             }
         }
         Message::None => {}
@@ -569,19 +700,32 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         .map(Message::Sidebar);
 
     // Content column: naturally starts at x=52 because of the Row sibling.
+    // NTP occupies the fill space between chrome and the tab strip.
+    let ntp_or_fill: iced::Element<'_, Message> =
+        if let Some(ntp_el) = state.new_tab.view(state.window_width, state.profile_name(), state.palette) {
+            ntp_el.map(Message::NewTab)
+        } else {
+            iced::widget::Space::new()
+                .height(Length::Fill)
+                .into()
+        };
+
     let content_column = match state.tab_bar.position {
         crate::tab_bar::TabBarPosition::Bottom => Column::new()
             .width(Length::Fill)
             .height(Length::Fill)
             .push(traffic_light_spacer())
             .push(chrome_placeholder(state))
-            .push(iced::widget::Space::new().height(Length::Fill))
+            .push(ntp_or_fill)
             .push(strip),
         crate::tab_bar::TabBarPosition::Top => Column::new()
             .width(Length::Fill)
             .height(Length::Fill)
             .push(traffic_light_spacer())
-            .push(chrome_placeholder(state)),
+            .push(chrome_placeholder(state))
+            .push(iced::widget::Space::new().height(design::space::S4))
+            .push(strip)
+            .push(ntp_or_fill),
     };
 
     // Row: [sidebar 52px] | [content fills rest]
@@ -667,15 +811,13 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         main_stack = main_stack.push(ts_view.map(Message::CardView));
     }
 
-    // Global drag capture: when a tab-bar or sidebar drag is active, push a
-    // full-window mouse_area that tracks cursor movement and mouse-up
-    // regardless of which widget is under the cursor. Without this, StripExited
-    // or leaving the sidebar boundary ends the drag prematurely.
-    // Only tab-bar drag needs global capture. Sidebar drag uses PillEntered
-    // for swapping — the global capture's on_move would intercept those events
-    // and break pill hover detection.
-    let any_drag_active = state.tab_bar.drag_active;
-    if any_drag_active {
+    // Global drag capture for tab-bar strip drag only.
+    // Tab-bar drag needs on_move to track horizontal cursor position outside
+    // the strip. Sidebar pill drag must NOT add any full-window overlay here
+    // because any mouse_area pushed above the sidebar in the Stack intercepts
+    // CursorMoved events and prevents PillEntered from firing.
+    // Sidebar drag release is handled via subscription (see `subscription()`).
+    if state.tab_bar.drag_active {
         main_stack = main_stack.push(
             iced::widget::mouse_area(
                 container(
@@ -1016,23 +1158,15 @@ fn chrome_placeholder(state: &AppState) -> Element<'_, Message> {
         .push(address_bar)
         .push(top_chrome);
 
-    // TODO Module 46 mount point: new tab page
     // TODO Module 53 mount point: mode-switch popup
     // TODO Module 64 mount point: first-launch wizard overlay
 
-    let mut col = Column::new().width(Length::Fill).push(top_bar);
-
-    if state.tab_bar.position == crate::tab_bar::TabBarPosition::Top {
-        let top_strip = state
-            .tab_bar
-            .view_strip(state.window_width, state.palette)
-            .map(Message::TabBar);
-        col = col
-            .push(iced::widget::Space::new().height(design::space::S4))
-            .push(top_strip);
-    }
-
-    col.into()
+    // chrome_placeholder owns only the top chrome bar (address bar + identity capsule).
+    // Tab strip and NTP are laid out in content_column (see view()).
+    Column::new()
+        .width(Length::Fill)
+        .push(top_bar)
+        .into()
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,46 +1202,64 @@ fn app_style(_state: &AppState, _theme: &Theme) -> iced::theme::Style {
 fn subscription(state: &AppState) -> iced::Subscription<Message> {
     let resize = window::resize_events().map(|(id, size)| Message::WindowResized(id, size));
 
-    if state.card_view.open {
-        let kb = iced::keyboard::listen().map(|event| {
+    // Card-view keyboard navigation subscription.
+    let kb: Option<iced::Subscription<Message>> = if state.card_view.open {
+        Some(iced::keyboard::listen().map(|event| {
             use crate::card_view::{CardNavKey, CardViewMsg};
             use iced::keyboard::{key::Named, Event, Key};
             match event {
-                Event::KeyPressed {
-                    key: Key::Named(Named::Escape),
-                    ..
-                } => Message::CardView(CardViewMsg::Close),
-                Event::KeyPressed {
-                    key: Key::Named(Named::ArrowLeft),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Left)),
-                Event::KeyPressed {
-                    key: Key::Named(Named::ArrowRight),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Right)),
-                Event::KeyPressed {
-                    key: Key::Named(Named::ArrowUp),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Up)),
-                Event::KeyPressed {
-                    key: Key::Named(Named::ArrowDown),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Down)),
-                Event::KeyPressed {
-                    key: Key::Named(Named::Enter),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Enter)),
-                Event::KeyPressed {
-                    key: Key::Named(Named::Delete | Named::Backspace),
-                    ..
-                } => Message::CardView(CardViewMsg::KeyNav(CardNavKey::Close)),
+                Event::KeyPressed { key: Key::Named(Named::Escape), .. } =>
+                    Message::CardView(CardViewMsg::Close),
+                Event::KeyPressed { key: Key::Named(Named::ArrowLeft), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Left)),
+                Event::KeyPressed { key: Key::Named(Named::ArrowRight), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Right)),
+                Event::KeyPressed { key: Key::Named(Named::ArrowUp), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Up)),
+                Event::KeyPressed { key: Key::Named(Named::ArrowDown), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Down)),
+                Event::KeyPressed { key: Key::Named(Named::Enter), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Enter)),
+                Event::KeyPressed { key: Key::Named(Named::Delete | Named::Backspace), .. } =>
+                    Message::CardView(CardViewMsg::KeyNav(CardNavKey::Close)),
                 _ => Message::None,
             }
-        });
-        iced::Subscription::batch([resize, kb])
+        }))
     } else {
-        resize
-    }
+        None
+    };
+
+    // Sidebar pill-drag release subscription.
+    // A full-window Stack overlay cannot be used for sidebar drag because any
+    // mouse_area added above the sidebar in the Stack intercepts CursorMoved
+    // events and breaks PillEntered (swap detection). Instead we subscribe to
+    // raw events at the application level.
+    // Status::Ignored means no widget captured the release — cursor was outside
+    // the sidebar. Status::Captured means a sidebar widget (pill or outer
+    // mouse_area) already handled it; we leave those handlers to clean up.
+    let sidebar_drag: Option<iced::Subscription<Message>> = if state.sidebar.dragging {
+        Some(iced::event::listen_with(|event, status, _| {
+            use iced::event::Status;
+            use iced::mouse::{Button, Event as ME};
+            match event {
+                iced::Event::Mouse(ME::ButtonReleased(Button::Left))
+                    if status == Status::Ignored =>
+                {
+                    Some(Message::GlobalDragEnd)
+                }
+                _ => None,
+            }
+        }))
+    } else {
+        None
+    };
+
+    let subs: Vec<iced::Subscription<Message>> = [Some(resize), kb, sidebar_drag]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    iced::Subscription::batch(subs)
 }
 
 fn window_settings() -> window::Settings {
@@ -1137,7 +1289,7 @@ mod tests {
     #[test]
     fn boot_state_starts_as_standard_starting() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         assert_eq!(state.mode, Mode::Standard);
         assert_eq!(state.phase, AppPhase::Starting);
     }
@@ -1145,7 +1297,7 @@ mod tests {
     #[test]
     fn profile_loaded_transitions_to_ready() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         let _ = update(&mut state, Message::ProfileLoaded("alice".to_string()));
         assert_eq!(state.phase, AppPhase::Ready);
         assert_eq!(state.profile_name, "alice");
@@ -1154,7 +1306,7 @@ mod tests {
     #[test]
     fn convert_to_strict_only_from_ready_standard() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         // While in Starting phase, convert is a no-op.
         let _ = update(&mut state, Message::ConvertToStrict);
         assert_eq!(state.mode, Mode::Standard);
@@ -1171,7 +1323,7 @@ mod tests {
         // §3.6: once Strict, ConvertToStrict is the only mode message; there
         // is no reverse. Sending ConvertToStrict in Strict stays Strict.
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         state.mode = Mode::Strict;
         state.phase = AppPhase::Ready;
         let _ = update(&mut state, Message::ConvertToStrict);
@@ -1182,7 +1334,7 @@ mod tests {
     #[test]
     fn morph_tick_completes_at_token_duration() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
         // One tick at the full duration.
@@ -1195,7 +1347,7 @@ mod tests {
     #[test]
     fn reduced_motion_makes_morph_instant() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark);
+        let mut state = AppState::new("test".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         state.reduced_motion = true;
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
@@ -1207,7 +1359,7 @@ mod tests {
     #[test]
     fn narration_label_does_not_expose_internals() {
         let (tx, _rx) = mpsc::channel::<ChromeCommand>(8);
-        let state = AppState::new("alice".to_string(), Arc::new(tx), AppTheme::Dark);
+        let state = AppState::new("alice".to_string(), Arc::new(tx), AppTheme::Dark, true, pb_config::SearchEngine::DuckDuckGo);
         let label = state.narration_label();
         // Label must contain mode and profile name but not any file path.
         assert!(label.contains("Standard"));

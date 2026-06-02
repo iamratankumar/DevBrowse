@@ -387,10 +387,18 @@ fn chrome_tip<'a>(
             width: 1.0,
             radius: 8.0.into(),
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
-            offset: Vector::new(0.0, 6.0),
-            blur_radius: 20.0,
+        shadow: if palette.is_dark() {
+            Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+                offset: Vector::new(0.0, 6.0),
+                blur_radius: 20.0,
+            }
+        } else {
+            Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
+                offset: Vector::new(0.0, 3.0),
+                blur_radius: 8.0,
+            }
         },
         ..Default::default()
     });

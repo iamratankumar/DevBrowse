@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 iced       = { workspace = true }
 wgpu       = { workspace = true }
 dark-light = { workspace = true }
+chrono     = { workspace = true }
 
 [[bin]]
 name = "devbrowse_ui"

@@ -114,6 +114,8 @@ pub enum TabBarMsg {
 #[derive(Debug, Clone)]
 pub enum TabBarEvent {
     TabClosed(usize),
+    /// Last tab was closed — no tabs remain. Shell should show the NTP as home.
+    AllTabsClosed,
     NewTabRequested,
     /// User clicked empty strip space — shell should call window::drag().
     WindowDragRequested,
@@ -543,6 +545,12 @@ impl TabBar {
                 self.active_id = new_id;
                 self.mode = Mode::Standard;
                 self.hovered_tab_id = None;
+                // Clear any stale frozen chip widths. Stale freezes arise when
+                // AllTabsClosed fires via strip close (sets frozen_chip_px but
+                // never emits StabilizeRequested, so StabilizeExpired never fires).
+                // Without this clear, opening tabs after AllTabsClosed renders all
+                // new chips at the frozen single-tab width.
+                self.frozen_chip_px = None;
                 Some(TabBarEvent::NewTabRequested)
             }
             TabBarMsg::Noop => None,
@@ -558,14 +566,20 @@ impl TabBar {
     }
 
     fn close_tab(&mut self, id: usize, from_strip: bool) -> Option<TabBarEvent> {
-        // Determine successor before removal: prefer right neighbour, fall back
-        // to left (when closing the last tab), fall back to 0 (no tabs left).
+        // Determine successor before removal. When closing the only remaining
+        // tab there is no valid successor — guard against picking the same tab
+        // via saturating_sub(1) which would leave active_id pointing at a
+        // just-removed entry.
         let successor = if self.active_id == id {
-            let idx = self.tabs.iter().position(|t| t.id == id).unwrap_or(0);
-            self.tabs
-                .get(idx + 1)
-                .or_else(|| self.tabs.get(idx.saturating_sub(1)))
-                .map(|t| t.id)
+            if self.tabs.len() <= 1 {
+                None // closing the only tab — no successor
+            } else {
+                let idx = self.tabs.iter().position(|t| t.id == id).unwrap_or(0);
+                self.tabs
+                    .get(idx + 1)
+                    .or_else(|| idx.checked_sub(1).and_then(|i| self.tabs.get(i)))
+                    .map(|t| t.id)
+            }
         } else {
             None
         };
@@ -581,11 +595,19 @@ impl TabBar {
 
         self.tabs.retain(|t| t.id != id);
         if self.active_id == id {
-            self.active_id =
-                successor.unwrap_or_else(|| self.tabs.first().map(|t| t.id).unwrap_or(0));
+            // successor is None when tabs is now empty — sentinel 0 (no active tab).
+            self.active_id = successor.unwrap_or(0);
         }
         // Re-evaluate hover so the chip now under the cursor shows its X button.
         self.hovered_tab_id = self.tab_id_at_x(self.cursor_strip_x);
+
+        if self.tabs.is_empty() {
+            // Clear the freeze so when new tabs are opened the strip renders
+            // at correct widths without waiting for a StabilizeExpired that
+            // will never arrive (we return AllTabsClosed, not StabilizeRequested).
+            self.frozen_chip_px = None;
+            return Some(TabBarEvent::AllTabsClosed);
+        }
 
         if from_strip {
             Some(TabBarEvent::StabilizeRequested(self.stabilize_generation))
@@ -820,5 +842,52 @@ mod tests {
         let mut tb = TabBar::new(TabBarPosition::Bottom);
         let event = tb.update(TabBarMsg::TabsGridPressed);
         assert!(matches!(event, Some(TabBarEvent::TabScreenRequested)));
+    }
+
+    fn single_standard_tab_bar() -> TabBar {
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        let stub = &tb.tabs[0].clone();
+        tb.tabs = vec![TabEntry {
+            id: 1,
+            mode: Mode::Standard,
+            has_unsaved_input: false,
+            ..stub.clone()
+        }];
+        tb.active_id = 1;
+        tb
+    }
+
+    #[test]
+    fn closing_last_tab_emits_all_tabs_closed() {
+        let mut tb = single_standard_tab_bar();
+        let event = tb.update(TabBarMsg::TabCloseRequested(1));
+        assert!(
+            matches!(event, Some(TabBarEvent::AllTabsClosed)),
+            "expected AllTabsClosed, got {event:?}"
+        );
+        assert_eq!(tb.tab_count(), 0);
+    }
+
+    #[test]
+    fn closing_last_tab_leaves_no_active_id_pointing_at_removed_tab() {
+        let mut tb = single_standard_tab_bar();
+        tb.update(TabBarMsg::TabCloseRequested(1));
+        // tabs is empty; active_id (sentinel 0) must not match any real tab.
+        assert!(tb.tabs.is_empty());
+        assert!(tb.tabs.iter().all(|t| t.id != tb.active_id));
+    }
+
+    #[test]
+    fn closing_second_to_last_tab_still_emits_tab_closed() {
+        let mut tb = TabBar::new(TabBarPosition::Bottom);
+        let stub = tb.tabs[0].clone();
+        tb.tabs = vec![
+            TabEntry { id: 10, mode: Mode::Standard, has_unsaved_input: false, ..stub.clone() },
+            TabEntry { id: 11, mode: Mode::Standard, has_unsaved_input: false, ..stub },
+        ];
+        tb.active_id = 10;
+        let event = tb.update(TabBarMsg::TabCloseRequested(10));
+        assert!(matches!(event, Some(TabBarEvent::TabClosed(10))));
+        assert_eq!(tb.tab_count(), 1);
     }
 }

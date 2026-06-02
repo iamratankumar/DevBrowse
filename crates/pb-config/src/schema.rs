@@ -267,6 +267,11 @@ pub struct UiConfig {
     /// "reduce transparency / reduce motion" setting and disables vibrancy
     /// effects in favour of solid backgrounds with WCAG AA contrast.
     pub reduce_transparency: bool,
+    /// Module 46 / 64.13: when true the NTP shows the command-bar placeholder
+    /// (wired to the real command bar by Module 64.13). When false a plain
+    /// search bar is shown instead. Default ON.
+    #[serde(default = "default_true")]
+    pub command_bar_enabled: bool,
 }
 
 impl Default for UiConfig {
@@ -276,6 +281,7 @@ impl Default for UiConfig {
             show_identity_in_tab_bar: true,
             tab_layout: TabLayout::default(),
             reduce_transparency: false,
+            command_bar_enabled: true,
         }
     }
 }

@@ -442,6 +442,12 @@ pub struct AddressBar {
     /// True during the 150 ms grace period after ConvertChipExited fires but
     /// before we know whether the cursor is heading into the popup.
     strict_popup_grace: bool,
+    /// Active tab ID — set by reset_for_tab so DismissConvertChip can tag it.
+    current_tab_id: usize,
+    /// Tab IDs where the user explicitly dismissed the chip. Persists across
+    /// tab switches so switching away and back keeps the chip hidden.
+    /// Cleared when the tab navigates to a real URL or is closed.
+    dismissed_tab_ids: std::collections::HashSet<usize>,
 }
 
 impl std::fmt::Debug for AddressBar {
@@ -473,6 +479,8 @@ impl AddressBar {
             convert_chip_hovered: false,
             convert_popup_hovered: false,
             strict_popup_grace: false,
+            current_tab_id: 0,
+            dismissed_tab_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -523,6 +531,40 @@ impl AddressBar {
         self.convert_chip_hovered = false;
         self.convert_popup_hovered = false;
         self.strict_popup_grace = false;
+    }
+
+    /// Reset the bar to the state appropriate for a newly activated or created tab.
+    ///
+    /// - Empty `tab_url` → fresh tab: chip shows unless user previously dismissed it for
+    ///   this tab (dismissal survives tab switches).
+    /// - Non-empty `tab_url` → existing tab: URL shown, chip hidden, dismissal cleared.
+    ///
+    /// Called by the shell on every tab switch, tab creation, and all-tabs-closed.
+    pub fn reset_for_tab(&mut self, tab_id: usize, tab_url: &str, mode: Mode) {
+        self.current_tab_id = tab_id;
+        self.sync_mode(mode);
+        self.url_input.clear();
+        self.bar_state = BarState::Rest;
+        self.suggestions.update(SuggestionEvent::Dismissed);
+        if tab_url.is_empty() {
+            // Respect a prior user dismissal on this tab — don't re-show the chip.
+            self.chip_state = if self.dismissed_tab_ids.contains(&tab_id) {
+                ChipState::Hidden
+            } else {
+                ChipState::FreshTab
+            };
+            self.current_url = String::new();
+        } else {
+            // Real URL committed — navigation resets dismissal for this tab.
+            self.dismissed_tab_ids.remove(&tab_id);
+            self.chip_state = ChipState::Hidden;
+            self.current_url = tab_url.to_string();
+        }
+    }
+
+    /// Remove dismissal record for a closed tab (prevents unbounded set growth).
+    pub fn forget_tab(&mut self, tab_id: usize) {
+        self.dismissed_tab_ids.remove(&tab_id);
     }
 
     /// Renders the floating URL bar as an Iced element.
@@ -1706,6 +1748,7 @@ impl AddressBar {
             AddressBarMsg::DismissConvertChip => {
                 self.chip_state = ChipState::Hidden;
                 self.convert_chip_hovered = false;
+                self.dismissed_tab_ids.insert(self.current_tab_id);
                 (None, Task::none())
             }
             AddressBarMsg::NavigatedExternally(url) => {

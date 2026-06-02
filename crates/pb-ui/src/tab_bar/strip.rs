@@ -28,6 +28,9 @@ impl TabBar {
         _window_width: f32,
         palette: &'static crate::design::Palette,
     ) -> Element<'_, TabBarMsg> {
+        // Tab bar is only useful with 2+ tabs. With 0 or 1 tab it adds visual
+        // clutter without benefit — the single active tab has nowhere to navigate
+        // to and the close button is accessible via the sidebar pill tooltip.
         if self.tabs.len() <= 1 {
             return Space::new().into();
         }
@@ -296,13 +299,18 @@ impl TabBar {
             }
         } else if is_active {
             // Active always uses the same glassy blue border regardless of mode.
+            // Glow suppressed on light background — would look harsh.
             (
                 iced::Color::from_rgba(0.58, 0.74, 1.0, 0.88),
                 1.0_f32,
-                iced::Shadow {
-                    color: iced::Color::from_rgba(0.357, 0.553, 0.937, 0.45),
-                    offset: iced::Vector::new(0.0, 0.0),
-                    blur_radius: 10.0,
+                if palette.is_dark() {
+                    iced::Shadow {
+                        color: iced::Color::from_rgba(0.357, 0.553, 0.937, 0.45),
+                        offset: iced::Vector::new(0.0, 0.0),
+                        blur_radius: 10.0,
+                    }
+                } else {
+                    iced::Shadow::default()
                 },
             )
         } else if is_hovered {
