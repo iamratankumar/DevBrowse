@@ -89,6 +89,11 @@ impl<'a> canvas::Program<NewTabMsg> for CompassProgram<'a> {
 fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     let cx = size.width / 2.0 + 28.0;
     let cy = 74.0;
+    //
+    // let scale = 1.1_f32;
+    // frame.translate(Vector::new(cx, cy));
+    // frame.scale(scale);
+    // frame.translate(Vector::new(-cx, -cy));
 
     let is_dark = palette.is_dark();
     // In dark mode dim everything — fills and strokes — so the illustration
@@ -129,7 +134,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     frame.stroke(&inner, solid(sc(0.28), 0.8));
 
     // ── Needle polygons ───────────────────────────────────────────────────────
-    // N needle — accent1 filled, points up
     let n_needle = Path::new(|b| {
         b.move_to(Point::new(cx, cy - 50.0));
         b.line_to(Point::new(cx + 7.0, cy - 16.0));
@@ -139,7 +143,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     frame.fill(&n_needle, a1(0.95));
     frame.stroke(&n_needle, solid(A1, 1.2));
 
-    // S needle — hollow stroke only
     let s_needle = Path::new(|b| {
         b.move_to(Point::new(cx, cy + 50.0));
         b.line_to(Point::new(cx - 7.0, cy + 16.0));
@@ -148,7 +151,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     });
     frame.stroke(&s_needle, solid(sc(0.55), 1.5));
 
-    // W needle — hollow stroke only
     let w_needle = Path::new(|b| {
         b.move_to(Point::new(cx - 50.0, cy));
         b.line_to(Point::new(cx - 16.0, cy - 7.0));
@@ -157,7 +159,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     });
     frame.stroke(&w_needle, solid(sc(0.55), 1.3));
 
-    // E needle — accent2 filled
     let e_needle = Path::new(|b| {
         b.move_to(Point::new(cx + 50.0, cy));
         b.line_to(Point::new(cx + 16.0, cy + 7.0));
@@ -167,7 +168,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     frame.fill(&e_needle, a2(0.95));
     frame.stroke(&e_needle, solid(A2, 1.2));
 
-    // Axis dividers (thin, behind center jewel)
     let v_line = Path::new(|b| {
         b.move_to(Point::new(cx, cy - 16.0));
         b.line_to(Point::new(cx, cy + 16.0));
@@ -180,7 +180,6 @@ fn draw(frame: &mut Frame, size: Size, palette: &'static Palette) {
     });
     frame.stroke(&h_line, solid(sc(0.28), 0.6));
 
-    // Center jewel
     let jewel_outer = Path::circle(Point::new(cx, cy), 9.0);
     frame.fill(&jewel_outer, a1(0.25));
     frame.stroke(&jewel_outer, solid(A1, 1.8));
@@ -442,7 +441,7 @@ fn draw_strict(frame: &mut Frame, size: Size, palette: &'static Palette) {
     let inner = Path::circle(Point::new(cx, cy), 38.0);
     frame.stroke(&inner, solid(sc(0.2), 0.7));
 
-    // ── All four needles — terracotta, N is solid, others hollow ─────────────
+    // ── All four needles — terracotta, N solid, others hollow ─────────────────
     let n_needle = Path::new(|b| {
         b.move_to(Point::new(cx, cy - 50.0));
         b.line_to(Point::new(cx + 7.0, cy - 16.0));
@@ -465,6 +464,9 @@ fn draw_strict(frame: &mut Frame, size: Size, palette: &'static Palette) {
         });
         frame.stroke(&needle, solid(t(0.55), 1.3));
     }
+
+    // ── Padlock at center (replaces jewel) ────────────────────────────────────
+    draw_padlock(frame, Point::new(cx, cy), &solid, &t, &sc);
 
     // Intercardinal ticks
     for (x1, y1, x2, y2) in [
@@ -498,9 +500,6 @@ fn draw_strict(frame: &mut Frame, size: Size, palette: &'static Palette) {
     frame.fill_text(letter("S", cx, cy + 69.0, sc(0.45)));
     frame.fill_text(letter("W", cx - 69.0, cy + 1.0, sc(0.45)));
     frame.fill_text(letter("E", cx + 69.0, cy + 1.0, sc(0.45)));
-
-    // ── Padlock at center (replaces jewel) ────────────────────────────────────
-    draw_padlock(frame, Point::new(cx, cy), &solid, &t, &sc);
 
     // ── Shield in upper-right (replaces sun) ──────────────────────────────────
     draw_shield(frame, Point::new(cx + 118.0, cy - 12.0), &solid, &t, &sc);

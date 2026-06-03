@@ -497,6 +497,7 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                         state
                             .address_bar
                             .reset_for_tab(state.tab_bar.active_id, "", state.mode);
+                        state.new_tab.on_new_tab();
                     }
                     crate::tab_bar::TabBarEvent::WindowDragRequested => {
                         if let Some(id) = state.window_id {

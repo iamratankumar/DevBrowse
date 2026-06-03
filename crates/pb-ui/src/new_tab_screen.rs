@@ -127,6 +127,8 @@ pub enum NewTabMsg {
     IncrementFingerprintCount,
     /// Hint label fade-out timer fired.
     HintFadeOut,
+    /// Cursor moved anywhere over the NTP view (drives doodle needle animation).
+    CursorMoved(f32, f32),
 }
 
 /// Events emitted upward to the shell.
@@ -159,6 +161,8 @@ pub struct NewTabPage {
     pub placeholder_name: &'static str,
     /// Illustration for the doodle zone. Matches the session label.
     pub doodle: crate::doodles::Doodle,
+    /// Last cursor position in NTP-view coordinates (drives doodle needle).
+    pub cursor_pos: iced::Point,
 }
 
 impl NewTabPage {
@@ -184,12 +188,22 @@ impl NewTabPage {
             load_failed: false,
             placeholder_name: PLACEHOLDER_NAMES[idx],
             doodle: crate::doodles::Doodle::Unimplemented,
+            cursor_pos: iced::Point::ORIGIN,
         }
     }
 
     /// Pick and store a random doodle for this session.
     pub fn init_doodle(&mut self) {
         self.doodle = crate::doodles::Doodle::random();
+    }
+
+    /// Called when the user opens a new tab so time-based doodles restart.
+    pub fn on_new_tab(&mut self) {
+        use crate::doodles::Doodle;
+        if let Doodle::Launchpad(ref mut c) = self.doodle {
+            c.start = std::time::Instant::now();
+            c.cache.clear();
+        }
     }
 
     /// Invalidate the doodle cache on theme change.
@@ -258,6 +272,10 @@ impl NewTabPage {
                 self.stats.fingerprint_stops = self.stats.fingerprint_stops.saturating_add(1);
                 None
             }
+            NewTabMsg::CursorMoved(x, y) => {
+                self.cursor_pos = iced::Point::new(x, y);
+                None
+            }
             NewTabMsg::HintFadeOut => {
                 self.hint_visible = false;
                 None
@@ -297,7 +315,7 @@ impl NewTabPage {
         let accent = iced::Color::from_rgb(ac_r, ac_g, ac_b);
 
         // ── doodle illustration zone ──────────────────────────────────────────
-        let doodle_el = self.doodle.view(palette, self.mode);
+        let doodle_el = self.doodle.view(palette, self.mode, self.cursor_pos);
 
         // ── session label — doodle name, dim, above greeting ─────────────────
         let label_el = text(self.doodle.name()).size(11).color(text_dim);
@@ -312,8 +330,7 @@ impl NewTabPage {
         let time_of_day = match hour {
             5..=11 => "Good morning",
             12..=16 => "Good afternoon",
-            17..=20 => "Good evening",
-            _ => "Good night",
+            _ => "Good evening",
         };
         let greeting = text(format!("{time_of_day}, {display_name}."))
             .size(20)
@@ -492,19 +509,22 @@ impl NewTabPage {
 
         // FillPortion 1:4 → top spacer takes 20 % of available height.
         Some(
-            iced::widget::column![
-                iced::widget::Space::new()
-                    .width(Length::Fill)
-                    .height(Length::FillPortion(1)),
-                container(col.width(content_width))
-                    .width(Length::Fill)
-                    .align_x(iced::alignment::Horizontal::Center),
-                iced::widget::Space::new()
-                    .width(Length::Fill)
-                    .height(Length::FillPortion(2)),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
+            iced::widget::mouse_area(
+                iced::widget::column![
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::FillPortion(1)),
+                    container(col.width(content_width))
+                        .width(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Center),
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::FillPortion(2)),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill),
+            )
+            .on_move(|p| NewTabMsg::CursorMoved(p.x, p.y))
             .into(),
         )
     }
