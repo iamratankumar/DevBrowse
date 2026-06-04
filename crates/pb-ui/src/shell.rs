@@ -112,6 +112,8 @@ pub struct AppState {
     pub card_view: crate::card_view::CardView,
     /// Module 46 — new tab page.
     pub new_tab: crate::new_tab_screen::NewTabPage,
+    /// Module 47 — find in page.
+    pub find: crate::find_in_page::FindBar,
 }
 
 fn detect_os_theme() -> ThemeVariant {
@@ -170,6 +172,7 @@ impl AppState {
                 ntp.init_doodle();
                 ntp
             },
+            find: crate::find_in_page::FindBar::new(),
         }
     }
 
@@ -249,6 +252,10 @@ pub enum Message {
     /// Fullscreen animation settled — apply corner_radius change.
     /// 200 ms grace period expired — hide tooltip if cursor didn't re-enter.
     HideTooltip,
+    /// Find in page internal message (Module 47).
+    Find(crate::find_in_page::FindMsg),
+    /// Escape pressed globally — closes find bar if open, card view if open.
+    FindEscape,
     /// No-op used as a placeholder for mount points not yet connected.
     None,
 }
@@ -671,6 +678,16 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
                     .update(crate::sidebar::SidebarMsg::SidebarReleased);
             }
         }
+        Message::Find(fm) => {
+            return state.find.update(fm).map(Message::Find);
+        }
+        Message::FindEscape => {
+            if state.find.open {
+                let _ = state.find.update(crate::find_in_page::FindMsg::Closed);
+            } else if state.card_view.open {
+                state.card_view.open = false;
+            }
+        }
         Message::None => {}
     }
     Task::none()
@@ -939,6 +956,43 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
                 .width(Length::Fill)
                 .center_x(Length::Fill)
                 .height(Length::Shrink),
+        );
+    }
+
+    // Click-outside blocker for find bar mode dropdown.
+    // Pushed before the find bar so the find bar sits on top in the Stack.
+    // Clicking on the dropdown is captured by the dropdown; everything else
+    // hits this blocker and closes the dropdown.
+    if state.find.open && state.find.mode_dropdown_open {
+        main_stack = main_stack.push(
+            iced::widget::mouse_area(
+                container(
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill),
+            )
+            .on_press(Message::Find(
+                crate::find_in_page::FindMsg::ModeDropdownToggled,
+            )),
+        );
+    }
+
+    // Find bar overlay — bottom-right of content area, above tab strip (Module 47).
+    if let Some(find_el) = state.find.view(state.palette) {
+        main_stack = main_stack.push(
+            container(find_el.map(Message::Find))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Bottom)
+                .padding(
+                    iced::Padding::new(0.0)
+                        .right(design::space::S4 * 2.0)
+                        .bottom(52.0), // clear the tab strip
+                ),
         );
     }
 
@@ -1281,10 +1335,64 @@ fn subscription(state: &AppState) -> iced::Subscription<Message> {
         None
     };
 
-    let subs: Vec<iced::Subscription<Message>> = [Some(resize), kb, sidebar_drag]
-        .into_iter()
-        .flatten()
-        .collect();
+    // Cmd+F / Ctrl+F → open find bar (always active).
+    let find_open_kb: iced::Subscription<Message> =
+        iced::event::listen_with(|event, _status, _| {
+            use iced::keyboard::{key::Named, Event, Key, Modifiers};
+            match event {
+                iced::Event::Keyboard(Event::KeyPressed {
+                    key: Key::Character(ref c),
+                    modifiers,
+                    ..
+                }) if c.as_str() == "f"
+                    && (modifiers.contains(Modifiers::COMMAND)
+                        || modifiers.contains(Modifiers::CTRL)) =>
+                {
+                    Some(Message::Find(crate::find_in_page::FindMsg::Opened))
+                }
+                // Escape closes find bar when open; handled here so the
+                // find subscription doesn't need to know about card-view state.
+                iced::Event::Keyboard(Event::KeyPressed {
+                    key: Key::Named(Named::Escape),
+                    ..
+                }) => Some(Message::FindEscape),
+                _ => None,
+            }
+        });
+
+    // Enter / Shift+Enter for next/prev when find bar is open.
+    let find_nav_kb: Option<iced::Subscription<Message>> = if state.find.open {
+        Some(iced::event::listen_with(|event, _status, _| {
+            use iced::keyboard::{key::Named, Event, Key, Modifiers};
+            match event {
+                iced::Event::Keyboard(Event::KeyPressed {
+                    key: Key::Named(Named::Enter),
+                    modifiers,
+                    ..
+                }) => {
+                    if modifiers.contains(Modifiers::SHIFT) {
+                        Some(Message::Find(crate::find_in_page::FindMsg::PrevMatch))
+                    } else {
+                        Some(Message::Find(crate::find_in_page::FindMsg::NextMatch))
+                    }
+                }
+                _ => None,
+            }
+        }))
+    } else {
+        None
+    };
+
+    let subs: Vec<iced::Subscription<Message>> = [
+        Some(resize),
+        kb,
+        sidebar_drag,
+        Some(find_open_kb),
+        find_nav_kb,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     iced::Subscription::batch(subs)
 }

@@ -34,7 +34,7 @@ pub mod devtools;
 pub mod doodles;
 pub mod downloads;
 pub mod file_picker;
-pub mod find;
+pub mod find_in_page;
 pub mod history;
 pub mod network_viewer;
 pub mod new_tab_screen;

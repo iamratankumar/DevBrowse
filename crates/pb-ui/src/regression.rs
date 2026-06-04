@@ -345,3 +345,89 @@ fn regression_fullscreen_toggle_view_stable() {
     state.is_fullscreen = false;
     assert_view_stable(&state);
 }
+
+// ---------------------------------------------------------------------------
+// Group: Module 47 — Find in page
+// ---------------------------------------------------------------------------
+
+/// view() must not panic with find bar open.
+#[test]
+fn regression_find_bar_view_stable_open() {
+    let mut state = ready_state_for_test();
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::Opened),
+    );
+    assert!(state.find.open);
+    assert_view_stable(&state);
+}
+
+/// view() must not panic with find bar closed (default state).
+#[test]
+fn regression_find_bar_view_stable_closed() {
+    let state = ready_state_for_test();
+    assert!(!state.find.open);
+    assert_view_stable(&state);
+}
+
+/// Cmd+F equivalent opens the find bar.
+#[test]
+fn regression_find_bar_opens_via_message() {
+    let mut state = ready_state_for_test();
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::Opened),
+    );
+    assert!(state.find.open);
+}
+
+/// FindEscape closes the find bar when open.
+#[test]
+fn regression_find_bar_escape_closes_when_open() {
+    let mut state = ready_state_for_test();
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::Opened),
+    );
+    step(&mut state, Message::FindEscape);
+    assert!(!state.find.open);
+}
+
+/// FindEscape with find bar already closed: no panic.
+#[test]
+fn regression_find_escape_noop_when_closed() {
+    let mut state = ready_state_for_test();
+    step(&mut state, Message::FindEscape);
+    assert!(!state.find.open);
+    assert_view_stable(&state);
+}
+
+/// Query change is reflected in state.
+#[test]
+fn regression_find_bar_query_round_trips() {
+    let mut state = ready_state_for_test();
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::Opened),
+    );
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::QueryChanged(
+            "privacy".to_string(),
+        )),
+    );
+    assert_eq!(state.find.query, "privacy");
+    assert_view_stable(&state);
+}
+
+/// find bar open in Strict mode must not panic.
+#[test]
+fn regression_find_bar_stable_in_strict_mode() {
+    let mut state = ready_state_for_test();
+    state.mode = Mode::Strict;
+    step(
+        &mut state,
+        Message::Find(crate::find_in_page::FindMsg::Opened),
+    );
+    assert_view_stable(&state);
+}
