@@ -36,6 +36,7 @@ pub mod downloads;
 pub mod file_picker;
 pub mod find_in_page;
 pub mod history;
+pub mod menu; // native OS menu bar — stubs + TODO per-phase (Phase 11.9/12)
 pub mod network_viewer;
 pub mod new_tab_screen;
 pub mod notifications;

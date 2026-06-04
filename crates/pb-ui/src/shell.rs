@@ -114,6 +114,8 @@ pub struct AppState {
     pub new_tab: crate::new_tab_screen::NewTabPage,
     /// Module 47 — find in page.
     pub find: crate::find_in_page::FindBar,
+    /// Module 48 — history panel.
+    pub history: crate::history::HistoryPanel,
 }
 
 fn detect_os_theme() -> ThemeVariant {
@@ -133,6 +135,7 @@ impl AppState {
         app_theme: AppTheme,
         command_bar_enabled: bool,
         search_engine: pb_config::SearchEngine,
+        history_retention: pb_config::HistoryRetention,
     ) -> Self {
         let theme = match app_theme {
             AppTheme::System => detect_os_theme(),
@@ -173,6 +176,7 @@ impl AppState {
                 ntp
             },
             find: crate::find_in_page::FindBar::new(),
+            history: crate::history::HistoryPanel::new(history_retention),
         }
     }
 
@@ -256,6 +260,8 @@ pub enum Message {
     Find(crate::find_in_page::FindMsg),
     /// Escape pressed globally — closes find bar if open, card view if open.
     FindEscape,
+    /// History panel internal message (Module 48).
+    History(crate::history::HistoryMsg),
     /// No-op used as a placeholder for mount points not yet connected.
     None,
 }
@@ -278,6 +284,7 @@ fn boot() -> (AppState, Task<Message>) {
         cfg.ui.theme,
         cfg.ui.command_bar_enabled,
         cfg.search.default_engine,
+        cfg.history.retention,
     );
     // Immediately emit a simulated profile-loaded message so the shell
     // transitions to Ready without blocking the event loop.
@@ -331,6 +338,7 @@ pub(crate) fn ready_state_for_test() -> AppState {
         AppTheme::Light,
         true,
         pb_config::SearchEngine::DuckDuckGo,
+        pb_config::HistoryRetention::default(),
     );
     let _ = update(
         &mut state,
@@ -362,6 +370,51 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
             state
                 .new_tab
                 .update(crate::new_tab_screen::NewTabMsg::FavoritesLoaded(vec![]));
+            // Seed history with mock entries for Phase 8 visual testing.
+            // TODO Module 80: replace with real pb-storage history fetch.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            state
+                .history
+                .update(crate::history::HistoryMsg::EntriesLoaded(vec![
+                    crate::history::HistoryEntry {
+                        id: 1,
+                        title: "DevBrowse — Privacy Browser".to_string(),
+                        domain: "devbrowse.io".to_string(),
+                        url: "https://devbrowse.io/".to_string(),
+                        timestamp_ms: now - 600_000,
+                    },
+                    crate::history::HistoryEntry {
+                        id: 2,
+                        title: "DuckDuckGo — Privacy Search".to_string(),
+                        domain: "duckduckgo.com".to_string(),
+                        url: "https://duckduckgo.com/".to_string(),
+                        timestamp_ms: now - 1_800_000,
+                    },
+                    crate::history::HistoryEntry {
+                        id: 3,
+                        title: "Rust Programming Language".to_string(),
+                        domain: "rust-lang.org".to_string(),
+                        url: "https://www.rust-lang.org/".to_string(),
+                        timestamp_ms: now - 3_600_000,
+                    },
+                    crate::history::HistoryEntry {
+                        id: 4,
+                        title: "".to_string(),
+                        domain: "crates.io".to_string(),
+                        url: "https://crates.io/".to_string(),
+                        timestamp_ms: now - 90_000_000,
+                    },
+                    crate::history::HistoryEntry {
+                        id: 5,
+                        title: "Iced — A cross-platform GUI library".to_string(),
+                        domain: "iced.rs".to_string(),
+                        url: "https://iced.rs/".to_string(),
+                        timestamp_ms: now - 172_800_000,
+                    },
+                ]));
             // Sync address bar chip + mode for the active tab now that we are
             // Ready. Without this, the chip stays FreshTab (its default) on
             // tabs that already have a URL when the app opens.
@@ -681,9 +734,16 @@ pub(crate) fn update(state: &mut AppState, message: Message) -> Task<Message> {
         Message::Find(fm) => {
             return state.find.update(fm).map(Message::Find);
         }
+        Message::History(hm) => {
+            // Events (Navigate / AllCleared) are forwarded to Phase 11
+            // orchestrator once Module 80 lands. In Phase 8 they are no-ops.
+            let _ = state.history.update(hm);
+        }
         Message::FindEscape => {
             if state.find.open {
                 let _ = state.find.update(crate::find_in_page::FindMsg::Closed);
+            } else if state.history.open {
+                let _ = state.history.update(crate::history::HistoryMsg::Closed);
             } else if state.card_view.open {
                 state.card_view.open = false;
             }
@@ -732,8 +792,19 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
         .map(Message::Sidebar);
 
     // Content column: naturally starts at x=52 because of the Row sibling.
-    // NTP occupies the fill space between chrome and the tab strip.
-    let ntp_or_fill: iced::Element<'_, Message> = if let Some(ntp_el) =
+    // History panel (Module 48) takes over the content slot when open —
+    // renders as a full-screen "new tab" view. NTP shows otherwise.
+    //
+    // TODO Phase 11.9 (Windows): wire Win32 native History menu item click
+    //   → Message::History(HistoryMsg::Opened) via the OS event bridge in menu.rs.
+    // TODO Phase 12 (macOS/Linux): same bridge for NSMenu / GtkMenuBar.
+    let ntp_or_fill: iced::Element<'_, Message> = if state.history.open {
+        if let Some(hist_el) = state.history.view(state.palette) {
+            hist_el.map(Message::History)
+        } else {
+            iced::widget::Space::new().height(Length::Fill).into()
+        }
+    } else if let Some(ntp_el) =
         state
             .new_tab
             .view(state.window_width, state.profile_name(), state.palette)
@@ -843,6 +914,9 @@ pub(crate) fn view(state: &AppState) -> Element<'_, Message> {
     if let Some(ts_view) = state.card_view.view(&state.tab_bar.tabs, state.palette) {
         main_stack = main_stack.push(ts_view.map(Message::CardView));
     }
+
+    // History panel is mounted in ntp_or_fill (content area), not as a stack
+    // overlay. No push needed here — see content_column above.
 
     // Global drag capture for tab-bar strip drag only.
     // Tab-bar drag needs on_move to track horizontal cursor position outside
@@ -1350,8 +1424,18 @@ fn subscription(state: &AppState) -> iced::Subscription<Message> {
                 {
                     Some(Message::Find(crate::find_in_page::FindMsg::Opened))
                 }
-                // Escape closes find bar when open; handled here so the
-                // find subscription doesn't need to know about card-view state.
+                // Cmd+Y — open History panel (Module 48 keyboard map).
+                iced::Event::Keyboard(Event::KeyPressed {
+                    key: Key::Character(ref c),
+                    modifiers,
+                    ..
+                }) if c.as_str() == "y"
+                    && (modifiers.contains(Modifiers::COMMAND)
+                        || modifiers.contains(Modifiers::CTRL)) =>
+                {
+                    Some(Message::History(crate::history::HistoryMsg::Opened))
+                }
+                // Escape closes find bar / history / card-view.
                 iced::Event::Keyboard(Event::KeyPressed {
                     key: Key::Named(Named::Escape),
                     ..
@@ -1430,6 +1514,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         assert_eq!(state.mode, Mode::Standard);
         assert_eq!(state.phase, AppPhase::Starting);
@@ -1444,6 +1529,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         let _ = update(&mut state, Message::ProfileLoaded("alice".to_string()));
         assert_eq!(state.phase, AppPhase::Ready);
@@ -1459,6 +1545,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         // While in Starting phase, convert is a no-op.
         let _ = update(&mut state, Message::ConvertToStrict);
@@ -1482,6 +1569,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         state.mode = Mode::Strict;
         state.phase = AppPhase::Ready;
@@ -1499,6 +1587,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         state.phase = AppPhase::TransitioningMode;
         state.mode = Mode::Standard;
@@ -1518,6 +1607,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         state.reduced_motion = true;
         state.phase = AppPhase::TransitioningMode;
@@ -1536,6 +1626,7 @@ mod tests {
             AppTheme::Dark,
             true,
             pb_config::SearchEngine::DuckDuckGo,
+            pb_config::HistoryRetention::default(),
         );
         let label = state.narration_label();
         // Label must contain mode and profile name but not any file path.
