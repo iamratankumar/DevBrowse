@@ -31,10 +31,12 @@ Module N — <name> — done
 - Notes / surprises: <anything new to flush>
 ```
 
-## Module status updates on green tests
-- Flip the module's status in its phase file from `(next)` to `done`.
+## Module status updates — ONLY after explicit user approval
+**Never flip phase file status or README snapshot until the user explicitly approves the module.**
+The sequence is: code → cargo check/test/clippy green → run app visually → post status report → **wait for approval** → then and only then flip:
+- The module's status in its phase file from `(next)` to `done`.
 - Promote the next pending module to `(next)` — exactly one `(next)` across all phase files.
-- Update the README status snapshot in the same commit.
+- Update the README status snapshot.
 
 ## End-of-session checkpoint
 Before ending a chat, flush everything to the canonical place:
